@@ -44,10 +44,12 @@ def plotTMB(
     groups = df.groupby(["Types"])
     if redbar == "mean":
         redbars = groups.mean()["log10BURDENpMB"].sort_values(ascending=ascend)
-        names = groups.mean()["log10BURDENpMB"].sort_values(ascending=ascend).index
+        names = list(redbars.index)
+        redbars_list = redbars.to_list()
     elif redbar == "median":
         redbars = groups.median()["log10BURDENpMB"].sort_values(ascending=ascend)
-        names = groups.median()["log10BURDENpMB"].sort_values(ascending=ascend).index
+        names = list(redbars.index)
+        redbars_list = redbars.to_list()
     else:
         print("ERROR: redbar parameter must be either mean or median")
         return
@@ -56,8 +58,11 @@ def plotTMB(
     # second row of bottom label
     input_groups = inputDF.groupby(["Types"])
     input_counts = input_groups.count()["Mut_burden"][names]
-    list1 = counts.to_list()
-    list2 = input_counts.to_list()
+    # Convert to lists for pandas 3.12 compatibility (avoid integer indexing on Series)
+    counts_list = counts.to_list()
+    input_counts_list = input_counts.to_list()
+    list1 = counts_list
+    list2 = input_counts_list
     str1 = ""
     list3 = prepend(list1, str1)
     str2 = "\n"
@@ -124,14 +129,21 @@ def plotTMB(
         X_start = i * 2 + 0.2
         X_end = i * 2 + 2 - 0.2
         # rg = 1.8
+        group_name = names[i]
+        # Get group data - use try/except for pandas 3.12 compatibility
+        try:
+            group_data = groups.get_group(group_name)["log10BURDENpMB"]
+        except KeyError:
+            # Fallback: filter dataframe directly if get_group fails
+            group_data = df[df["Types"] == group_name]["log10BURDENpMB"]
         y_values = (
-            groups.get_group(names[i])["log10BURDENpMB"]
+            group_data
             .sort_values(ascending=True)
             .values.tolist()
         )
-        x_values = list(np.linspace(start=X_start, stop=X_end, num=counts[i]))
+        x_values = list(np.linspace(start=X_start, stop=X_end, num=counts_list[i]))
         plt.scatter(x_values, y_values, color="black", s=1.5)
-        plt.hlines(redbars[i], X_start, X_end, colors="red", zorder=2)
+        plt.hlines(redbars_list[i], X_start, X_end, colors="red", zorder=2)
         plt.text(
             (leftm + 0.2 + i * 0.4) / fig_width,
             0.85 / fig_length,

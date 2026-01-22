@@ -14,7 +14,7 @@ def readme():
         return f.read()
 
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 
 def write_version_py(filename="sigProfilerPlotting/version.py"):
@@ -23,7 +23,7 @@ def write_version_py(filename="sigProfilerPlotting/version.py"):
 # THIS FILE IS GENERATED FROM SIGPROFILERPLOTTING SETUP.PY
 short_version = '%(version)s'
 version = '%(version)s'
-update = 'v1.4.2: Add automated Docker build and publish pipeline'
+update = 'v1.4.3: Fix pandas 3.12 compatibility issues in tmbplot.py'
     
     """
     fh = open(filename, "w")
