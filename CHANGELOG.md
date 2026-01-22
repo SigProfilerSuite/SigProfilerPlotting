@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-01-22
+
+### Fixed
+- Fixed KeyError when accessing groupby groups in `tmbplot.py` for pandas 3.12 compatibility
+- Fixed integer indexing on pandas Series in `tmbplot.py` by converting to lists for pandas 3.12 compatibility
+- Improved error handling in `plotTMB()` function to handle group access failures gracefully
+
 ## [1.4.2] - 2025-10-13
 
 ### Added
