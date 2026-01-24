@@ -11,6 +11,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         python-version: ['3.9', '3.12']
@@ -42,9 +45,6 @@ jobs:
     
     - name: Build and push Docker image
       if: github.ref == 'refs/heads/master' && github.event_name == 'push' && matrix.python-version == '3.12'
-      env:
-        GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-        GHCR_PASSWORD: ${{ secrets.GHCR_PASSWORD }}
       run: |
         echo "Starting Docker deployment to GHCR for sigprofilersuite..."
         
@@ -56,7 +56,7 @@ jobs:
         
         echo "Building version: $VERSION_TAG for image: $IMAGE_NAME"
         
-        echo "$GHCR_PASSWORD" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+        echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
         
         docker build \
           --build-arg COMMIT_SHA=${{ github.sha }} \
