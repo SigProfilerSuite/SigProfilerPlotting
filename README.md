@@ -1,4 +1,4 @@
-[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://osf.io/2aj6t/wiki/home/) [![License](https://img.shields.io/badge/License-BSD\%202--Clause-orange.svg)](https://opensource.org/licenses/BSD-2-Clause) [![Build Status](https://app.travis-ci.com/AlexandrovLab/SigProfilerPlotting.svg?branch=master)](https://app.travis-ci.com/AlexandrovLab/SigProfilerPlotting)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://osf.io/2aj6t/wiki/home/) [![License](https://img.shields.io/badge/License-BSD\%202--Clause-orange.svg)](https://opensource.org/licenses/BSD-2-Clause) [![CI](https://github.com/sigprofilersuite/SigProfilerPlotting/actions/workflows/ci.yml/badge.svg)](https://github.com/sigprofilersuite/SigProfilerPlotting/actions/workflows/ci.yml)
 
 # SigProfilerPlotting
 SigProfilerPlotting provides a standard tool for displaying all types of mutational signatures as well as all types of mutational patterns in cancer genomes. The tool seamlessly integrates with other SigProfiler tools.
