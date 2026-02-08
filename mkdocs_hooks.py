@@ -9,13 +9,18 @@ _TOC_MARKER_LINE_RE = re.compile(r"^\s*@\[toc\]\([^)]+\)\s*$", re.IGNORECASE)
 _OSF_IMAGE_SIZE_SUFFIX_RE = re.compile(r"(!\[[^\]]*\]\([^\s)]+)\s+=\d+(?:%x|x)(\))")
 _OSF_URL_IN_MD_IMAGE_RE = re.compile(r"(!\[[^\]]*\]\()([^) \t\r\n]+)(\))")
 _OSF_URL_IN_HTML_IMG_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")', re.IGNORECASE)
-_OSF_EMBED_RE = re.compile(r"@\[(osf)\]\(([^)]+)\)", re.IGNORECASE)
+_OSF_EMBED_RE = re.compile(r"@\[\s*osf\s*\]\(([^)]+)\)", re.IGNORECASE)
 _OSF_WIKI_URL_RE = re.compile(r"https://osf\.io/([^/]+)/wiki/([^\s)\"]+)", re.IGNORECASE)
 _OSF_MANIFEST_CACHE = None
 _OSF_MANIFEST_LOADED = False
 _OSF_MISSING_CACHE = None
 _OSF_MISSING_LOADED = False
 _OSF_PLACEHOLDER = "assets/osf/osf_asset_unavailable.svg"
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
+_URL_REWRITES = {
+    "https://github.com/AlexandrovLab/SigProfilerPlotting": "https://github.com/SigProfilerSuite/SigProfilerPlotting",
+    "https://github.com/AlexandrovLab/SigProfilerPlottingR": "https://github.com/SigProfilerSuite/SigProfilerPlottingR",
+}
 
 # Map OSF wiki page names (decoded from URL) to local docs filenames.
 _OSF_WIKI_PAGE_TO_DOC = {
@@ -47,27 +52,29 @@ def on_page_markdown(markdown: str, page, config, files):
         line for line in lines if not _TOC_MARKER_LINE_RE.match(line.strip("\n"))
     ]
     cleaned = "".join(filtered_lines)
+    for old, new in _URL_REWRITES.items():
+        cleaned = cleaned.replace(old, new)
 
     # OSF Wiki sometimes appends non-standard size hints like " =50%x" inside
     # Markdown image links, which breaks rendering in MkDocs/Markdown.
     cleaned = _OSF_IMAGE_SIZE_SUFFIX_RE.sub(r"\1\2", cleaned)
 
-    # Convert OSF embed markers (e.g. "@[osf](abcde)") into plain links.
-    cleaned = _OSF_EMBED_RE.sub(r"[OSF](https://osf.io/\2/)", cleaned)
-
     prefix = _page_relative_prefix(page)
+    manifest = _load_osf_manifest(config) or {}
+    missing = _load_osf_missing(config) or set()
+
+    # Replace OSF embed markers with local assets if available.
+    cleaned = _replace_osf_embeds(cleaned, manifest=manifest, missing=missing, prefix=prefix)
 
     # Rewrite OSF wiki links to local pages (prevents navigation to downloaded HTML stubs).
     cleaned = _rewrite_osf_wiki_links(cleaned, prefix=prefix)
 
-    manifest = _load_osf_manifest(config)
     if manifest:
         for url, rel_path in manifest.items():
             if _is_osf_wiki_url(url):
                 continue
             cleaned = cleaned.replace(url, prefix + rel_path)
 
-    missing = _load_osf_missing(config)
     if missing:
         cleaned = _replace_blocked_osf_images(cleaned, missing, prefix=prefix)
 
@@ -163,6 +170,27 @@ def _replace_blocked_osf_images(markdown: str, blocked_urls: set, *, prefix: str
     out = _OSF_URL_IN_MD_IMAGE_RE.sub(md_repl, markdown)
     out = _OSF_URL_IN_HTML_IMG_RE.sub(html_repl, out)
     return out
+
+
+def _replace_osf_embeds(markdown: str, *, manifest: dict, missing: set, prefix: str) -> str:
+    def repl(m):
+        raw_id = m.group(1).strip().strip("/")
+        if not raw_id:
+            return f"![OSF asset unavailable]({prefix + _OSF_PLACEHOLDER})"
+
+        short_url = f"https://osf.io/{raw_id}/"
+        rel_path = manifest.get(short_url) if manifest else None
+        if rel_path:
+            target = prefix + rel_path
+            if Path(rel_path).suffix.lower() in _IMAGE_EXTS:
+                return f"![{raw_id}]({target})"
+            return f"[Download asset]({target})"
+
+        if short_url in missing:
+            return f"![OSF asset unavailable]({prefix + _OSF_PLACEHOLDER})"
+        return f"![OSF asset unavailable]({prefix + _OSF_PLACEHOLDER})"
+
+    return _OSF_EMBED_RE.sub(repl, markdown)
 
 
 def _rewrite_osf_wiki_links(markdown: str, *, prefix: str) -> str:

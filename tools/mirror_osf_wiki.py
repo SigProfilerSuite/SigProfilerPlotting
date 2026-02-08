@@ -13,6 +13,7 @@ from typing import Optional, Tuple, Dict, Set
 _OSF_API = "https://api.osf.io/v2"
 _OSF_FILES_RE = re.compile(r"https://files\.osf\.io/[^\s)\"']+")
 _OSF_SHORT_RE = re.compile(r"https://osf\.io/[^\s)\"']+")
+_OSF_EMBED_RE = re.compile(r"@\[\s*osf\s*\]\(([^)]+)\)", re.IGNORECASE)
 _OSF_IMAGE_SIZE_SUFFIX_RE = re.compile(
     r"(https://files\.osf\.io/[^\s)\"']+)\s+=\d+(?:%x|x)$"
 )
@@ -280,6 +281,11 @@ def _resolve_osf_file_download_url(
 
 def _extract_osf_file_urls(markdown: str) -> list[str]:
     urls = []
+    for embed_id in _OSF_EMBED_RE.findall(markdown):
+        asset_id = embed_id.strip().strip("/")
+        if asset_id:
+            urls.append(f"https://osf.io/{asset_id}/")
+
     for raw in _OSF_FILES_RE.findall(markdown) + _OSF_SHORT_RE.findall(markdown):
         url = raw.rstrip(").,")
         url = _OSF_IMAGE_SIZE_SUFFIX_RE.sub(r"\1", url)

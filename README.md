@@ -5,9 +5,9 @@ SigProfilerPlotting provides a standard tool for displaying all types of mutatio
 
 **INTRODUCTION**
 
-The purpose of this document is to provide a guide for using the SigProfilerPlotting framework and associated functions/tools to visualize the output from SigProfilerExtraction and SigProfilerSimulator. The primary documentation is now maintained in this repository under `docs/`, and the legacy OSF wiki source is at https://osf.io/2aj6t/wiki/home.
+The purpose of this document is to provide a guide for using the SigProfilerPlotting framework and associated functions/tools to visualize the output from SigProfilerExtraction and SigProfilerSimulator. The primary documentation is available at https://sigprofilersuite.github.io/SigProfilerPlotting/.
 
-For users that prefer working in an R environment, a wrapper package is provided and can be found and installed from: https://github.com/AlexandrovLab/SigProfilerPlottingR
+For users that prefer working in an R environment, a wrapper package is provided and can be found and installed from: https://github.com/SigProfilerSuite/SigProfilerPlottingR
 
 ![schematic](schematic.png)
 
