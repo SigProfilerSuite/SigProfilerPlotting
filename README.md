@@ -1,11 +1,11 @@
-[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://osf.io/2aj6t/wiki/home/) [![License](https://img.shields.io/badge/License-BSD\%202--Clause-orange.svg)](https://opensource.org/licenses/BSD-2-Clause) [![CI](https://github.com/sigprofilersuite/SigProfilerPlotting/actions/workflows/ci.yml/badge.svg)](https://github.com/sigprofilersuite/SigProfilerPlotting/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://sigprofilersuite.github.io/SigProfilerPlotting/) [![License](https://img.shields.io/badge/License-BSD\%202--Clause-orange.svg)](https://opensource.org/licenses/BSD-2-Clause) [![CI](https://github.com/sigprofilersuite/SigProfilerPlotting/actions/workflows/ci.yml/badge.svg)](https://github.com/sigprofilersuite/SigProfilerPlotting/actions/workflows/ci.yml)
 
 # SigProfilerPlotting
 SigProfilerPlotting provides a standard tool for displaying all types of mutational signatures as well as all types of mutational patterns in cancer genomes. The tool seamlessly integrates with other SigProfiler tools.
 
 **INTRODUCTION**
 
-The purpose of this document is to provide a guide for using the SigProfilerPlotting framework and associated functions/tools to visualize the output from SigProfilerExtraction and SigProfilerSimulator. An extensive Wiki page detailing the usage of this tool can be found at https://osf.io/2aj6t/wiki/home.
+The purpose of this document is to provide a guide for using the SigProfilerPlotting framework and associated functions/tools to visualize the output from SigProfilerExtraction and SigProfilerSimulator. The primary documentation is now maintained in this repository under `docs/`, and the legacy OSF wiki source is at https://osf.io/2aj6t/wiki/home.
 
 For users that prefer working in an R environment, a wrapper package is provided and can be found and installed from: https://github.com/AlexandrovLab/SigProfilerPlottingR
 

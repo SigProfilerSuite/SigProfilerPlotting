@@ -1,0 +1,79 @@
+site_name: SigProfilerPlotting Documentation
+site_description: Documentation for SigProfilerPlotting - a tool for plotting mutational signatures and patterns
+site_author: SigProfilerSuite
+site_url: https://sigprofilersuite.github.io/SigProfilerPlotting/
+
+repo_name: SigProfilerSuite/SigProfilerPlotting
+repo_url: https://github.com/SigProfilerSuite/SigProfilerPlotting
+
+docs_dir: docs
+
+use_directory_urls: false
+
+exclude_docs: |
+  osf_wiki/**
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.copy
+
+plugins:
+  - search
+
+hooks:
+  - mkdocs_hooks.py
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - tables
+  - attr_list
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Installation:
+    - Python: Installation-Python.md
+    - R: Installation-R.md
+  - Usage:
+    - Plotting Substitutions: Plotting-Substitutions.md
+    - Plotting Indels: Plotting-Indels.md
+    - Plotting Dinucleotides: Plotting-Dinucleotides.md
+    - Plotting a Sample Portrait: Plotting-a-Sample-Portrait.md
+    - Example Program: Example-Program.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/SigProfilerSuite/SigProfilerPlotting
+
+extra_css:
+  - assets/stylesheets/extra.css
