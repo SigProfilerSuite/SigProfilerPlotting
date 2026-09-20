@@ -137,4 +137,4 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 **CONTACT INFORMATION**
 
-Please address any queries or bug reports to Erik Bergstrom at ebergstr@eng.ucsd.edu
+Please address any queries or bug reports to S M Ashiqul Islam at sislam6@albany.edu
