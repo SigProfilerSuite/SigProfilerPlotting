@@ -1,8 +1,14 @@
 import os
-from PIL import Image, ImageChops
+from PIL import Image
 import sigProfilerPlotting as sigPlt
 import pytest
 import pandas as pd
+
+from tests.image_comparison import (
+    MINIMUM_CHROMA_SIMILARITY,
+    MINIMUM_STRUCTURAL_SIMILARITY,
+    image_similarities,
+)
 
 current_script_path = os.path.abspath(__file__)
 
@@ -13,18 +19,6 @@ SPP_ID = os.path.join(SPP_PATH, "input", "ID")
 SPP_CNV = os.path.join(SPP_PATH, "input", "CNV")
 SPP_SV = os.path.join(SPP_PATH, "input", "SV")
 SPP_STANDARD_PNG = os.path.join(SPP_PATH, "standard_png")
-
-
-# Helper function to calculate the difference between two images
-def image_difference(img1_path, img2_path):
-    with Image.open(img1_path) as img1, Image.open(img2_path) as img2:
-        img1, img2 = img1.convert("L"), img2.convert("L")
-        diff = ImageChops.difference(img1, img2)
-        total_difference = sum(abs(p) for p in diff.getdata())
-        max_difference = img1.size[0] * img1.size[1] * 255
-        if (total_difference / max_difference) > 1e-4:
-            diff.show()
-        return total_difference / max_difference
 
 
 def plotSV_wrapper(
@@ -199,6 +193,14 @@ def test_plot_generation(config_key, input_data):
             # This handles the case for comparing the entire plot
             os.rename(test_image_path, cropped_test_image_path)
 
-        assert (
-            image_difference(cropped_test_image_path, standard_image_path) < 1e-4
-        ), f"Images for {config_key}, {test_case} did not match."
+        structure, chroma = image_similarities(
+            cropped_test_image_path, standard_image_path
+        )
+        assert structure >= MINIMUM_STRUCTURAL_SIMILARITY, (
+            f"Images for {config_key}, {test_case} have a structural mismatch: "
+            f"SSIM={structure:.6f}, minimum={MINIMUM_STRUCTURAL_SIMILARITY:.6f}."
+        )
+        assert chroma >= MINIMUM_CHROMA_SIMILARITY, (
+            f"Images for {config_key}, {test_case} have a color mismatch: "
+            f"chroma={chroma:.6f}, minimum={MINIMUM_CHROMA_SIMILARITY:.6f}."
+        )

@@ -15,7 +15,6 @@ import pickle
 import re
 import string
 import sys
-import warnings
 from bdb import set_trace
 from collections import OrderedDict
 
@@ -30,11 +29,13 @@ import numpy as np
 import pandas as pd
 import sklearn
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
 from matplotlib.ticker import LinearLocator
 from PIL import Image
 from sklearn.preprocessing import LabelEncoder
 
 import sigProfilerPlotting as spplt
+from .version import short_version as SPP_VERSION
 
 matplotlib.use("Agg")
 
@@ -48,7 +49,6 @@ SPP_REFERENCE = os.path.join(SPP_PATH, "reference_formats/")
 _FONTS_LOADED = False
 
 logging.getLogger("matplotlib.font_manager").disabled = False
-warnings.filterwarnings("ignore")
 
 type_dict = {
     "96": "SBS96.txt",
@@ -56,8 +56,12 @@ type_dict = {
     "sbs96": "SBS96.txt",
     "288": "SBS288.txt",
     "sbs288": "SBS288.txt",
+    "384": "SBS384.txt",
+    "sbs384": "SBS384.txt",
     "sbs1536": "SBS1536.txt",
     "1536": "SBS1536.txt",
+    "4608": "SBS4608.txt",
+    "sbs4608": "SBS4608.txt",
     "sbs6144": "SBS6144.txt",
     "6144": "SBS6144.txt",
     "78": "DBS78.txt",
@@ -101,9 +105,69 @@ def clear_plotting_memory():
         matplotlib.pyplot.close(fig)
 
 
+def _validate_savefig_format(savefig_format):
+    if not isinstance(savefig_format, str) or savefig_format.lower() not in {
+        "pdf",
+        "png",
+        "pil_image",
+    }:
+        raise ValueError("ERROR: savefig_format must be 'pdf', 'png', or 'PIL_Image'.")
+
+
+def _require_pdf_for_legacy_context(
+    savefig_format, plot_type, modern_contexts, function_name
+):
+    _validate_savefig_format(savefig_format)
+    if plot_type not in modern_contexts and savefig_format.lower() != "pdf":
+        raise ValueError(
+            f"{function_name} context '{plot_type}' supports only savefig_format='pdf'."
+        )
+
+
+def _parse_mutation_value(value, percentage, sample=None, mutation_type=None):
+    """Parse a matrix value without allowing a failed conversion to be ignored."""
+    try:
+        parsed = float(value) if percentage else int(value)
+    except (TypeError, ValueError) as error:
+        location = []
+        if sample is not None:
+            location.append(f"sample '{sample}'")
+        if mutation_type is not None:
+            location.append(f"mutation type '{mutation_type}'")
+        location_text = " for " + ", ".join(location) if location else ""
+        expected = "a numeric value" if percentage else "an integer mutation count"
+        raise ValueError(
+            f"Invalid matrix value {value!r}{location_text}; expected {expected}."
+        ) from error
+
+    if not np.isfinite(parsed):
+        raise ValueError(f"Invalid non-finite matrix value {value!r}.")
+    return parsed
+
+
+def _open_canonical_legacy_matrix(matrix_path, plot_type):
+    """Open a standard legacy SBS matrix in canonical reference order.
+
+    PCAWG comma-separated inputs have a different multi-column context layout and
+    retain their existing parser. Standard tab-separated matrices are validated
+    and reindexed through ``process_input`` before their legacy plotter reads them.
+    """
+    with open(matrix_path, encoding="utf-8") as matrix_file:
+        header = matrix_file.readline()
+    if "," in header and "\t" not in header:
+        return open(matrix_path, encoding="utf-8")
+
+    data = process_input(matrix_path, plot_type)
+    canonical_matrix = io.StringIO()
+    data.to_csv(canonical_matrix, sep="\t", index_label=MUTTYPE)
+    canonical_matrix.seek(0)
+    return canonical_matrix
+
+
 # Saves figures to files, unless savefig_format is "PIL_Image", in which case
 # the figures are saved to a dictionary of buffers
 def output_results(savefig_format, output_path, project, figs, context_type, dpi=100):
+    _validate_savefig_format(savefig_format)
     if savefig_format.lower() == "pdf":
         file_path = os.path.join(output_path, f"{context_type}_plots_{project}.pdf")
         pp = PdfPages(file_path)
@@ -116,16 +180,17 @@ def output_results(savefig_format, output_path, project, figs, context_type, dpi
         clear_plotting_memory()
     elif savefig_format.lower() == "png":
         for fig in figs:
+            file_path = os.path.join(
+                output_path, f"{context_type}_plots_{fig}.png"
+            )
             if context_type in ("CNV_48", "SV_32"):
                 figs[fig].savefig(
-                    output_path + context_type + "_plots_" + fig + ".png",
+                    file_path,
                     dpi=dpi,
                     bbox_inches="tight",
                 )
             else:
-                figs[fig].savefig(
-                    output_path + context_type + "_plots_" + fig + ".png", dpi=dpi
-                )
+                figs[fig].savefig(file_path, dpi=dpi)
         clear_plotting_memory()
     elif savefig_format.lower() == "pil_image":
         image_list = {}
@@ -144,8 +209,6 @@ def output_results(savefig_format, output_path, project, figs, context_type, dpi
             image_list[fig] = tmp_image
         clear_plotting_memory()
         return image_list
-    else:
-        raise ValueError("ERROR: savefig_format must be 'pdf', 'png', or 'PIL_Image'.")
     return None
 
 
@@ -208,15 +271,43 @@ def process_input(matrix_path, plot_type):
 
     def order_input_context(plot_type, input_data):
         if plot_type.lower() in type_dict:
-            if data.shape[0] != len(get_context_reference(plot_type)):
+            ref_format = get_context_reference(plot_type)
+            if input_data.shape[0] != len(ref_format):
                 raise ValueError(
                     "Input matrix file should have "
-                    + str(len(get_context_reference(plot_type)))
+                    + str(len(ref_format))
                     + " rows"
                 )
-            else:
-                ref_format = get_context_reference(plot_type)
-                reindexed_data = input_data.reindex(ref_format)
+
+            duplicate_contexts = input_data.index[input_data.index.duplicated()].unique()
+            if len(duplicate_contexts):
+                raise ValueError(
+                    "Input matrix contains duplicate mutation contexts: "
+                    + ", ".join(map(str, duplicate_contexts))
+                )
+
+            actual_contexts = set(input_data.index)
+            expected_contexts = set(ref_format)
+            missing_contexts = expected_contexts - actual_contexts
+            unexpected_contexts = actual_contexts - expected_contexts
+            if missing_contexts or unexpected_contexts:
+                details = []
+                if missing_contexts:
+                    details.append(
+                        "missing: " + ", ".join(sorted(map(str, missing_contexts)))
+                    )
+                if unexpected_contexts:
+                    details.append(
+                        "unexpected: "
+                        + ", ".join(sorted(map(str, unexpected_contexts)))
+                    )
+                raise ValueError(
+                    "Input matrix mutation contexts do not match the reference ("
+                    + "; ".join(details)
+                    + ")."
+                )
+
+            reindexed_data = input_data.reindex(ref_format)
         else:
             # If a non-standard context is used, no sort is applied
             reindexed_data = input_data
@@ -241,25 +332,88 @@ def get_default_96labels():
     return result
 
 
+def _default_template_cache_dir():
+    """Return a writable, per-user cache location for generated templates."""
+    if sys.platform == "darwin":
+        cache_root = os.path.expanduser("~/Library/Caches")
+    elif os.name == "nt":
+        cache_root = os.getenv(
+            "LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local")
+        )
+    else:
+        cache_root = os.getenv("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+    compatibility_key = (
+        f"spp-{SPP_VERSION}_matplotlib-{matplotlib.__version__}_"
+        f"py-{sys.version_info.major}.{sys.version_info.minor}"
+    )
+    return os.path.join(
+        cache_root, "SigProfilerPlotting", "templates", compatibility_key
+    )
+
+
+def _finish_plot_template(plot, path, return_plot_template, strict_cache):
+    if path is not None:
+        try:
+            with open(path, "wb") as template_file:
+                pickle.dump(plot, template_file)
+        except OSError:
+            if strict_cache:
+                raise
+    if return_plot_template:
+        return plot
+
+
 def make_pickle_file(context="SBS96", return_plot_template=False, volume=None):
 
     # The environmental variable takes precedence over the volume argument
     # If the environmental variable is not set, the volume argument is used
-    volume = os.getenv("SIGPROFILERPLOTTING_VOLUME", volume)
+    configured_volume = os.getenv("SIGPROFILERPLOTTING_VOLUME") or None
+    requested_volume = volume or None
+    strict_cache = configured_volume is not None or requested_volume is not None
+    volume = configured_volume or requested_volume
 
     # Use the default volume when no environmental variable or volume argument is provided
     if volume is None:
-        volume = SPP_TEMPLATES
+        volume = _default_template_cache_dir()
 
     path = os.path.join(volume, context + ".pkl")
 
     # if the pickle file already exists, return the template
     if os.path.exists(path):
-        return pickle.load(open(path, "rb"))
+        try:
+            with open(path, "rb") as template_file:
+                cached_template = pickle.load(template_file)
+            if not isinstance(cached_template, Figure):
+                raise TypeError(
+                    "Cached plot template must be a matplotlib.figure.Figure, not "
+                    f"{type(cached_template).__name__}."
+                )
+            return cached_template
+        except (
+            OSError,
+            EOFError,
+            pickle.PickleError,
+            AttributeError,
+            ImportError,
+            ValueError,
+            TypeError,
+        ):
+            if strict_cache:
+                raise
+            # An implicit cache is disposable. Regenerate stale or incomplete
+            # templates instead of making plotting fail permanently.
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     # check if the template directory exists, create if not
-    if not os.path.exists(volume):
-        os.mkdir(volume)
+    try:
+        os.makedirs(volume, exist_ok=True)
+    except OSError:
+        if strict_cache:
+            raise
+        path = None
 
     if context == "SBS96":
         plot_custom_text = False
@@ -537,11 +691,9 @@ def make_pickle_file(context="SBS96", return_plot_template=False, volume=None):
         )
 
         [i.set_color("black") for i in plt.gca().get_yticklabels()]
-        if return_plot_template == False:
-            pickle.dump(plot1, open(path, "wb"))
-        else:
-            pickle.dump(plot1, open(path, "wb"))
-            return plot1
+        return _finish_plot_template(
+            plot1, path, return_plot_template, strict_cache
+        )
     elif context == "SBS288":
         plot_custom_text = False
         sig_probs = False
@@ -745,11 +897,9 @@ def make_pickle_file(context="SBS96", return_plot_template=False, volume=None):
         panel2.set_xticklabels(xlabels, fontsize=30)
         handles, labels = panel2.get_legend_handles_labels()
         panel2.legend(handles[:3], labels[:3], loc="best", prop={"size": 30})
-        if return_plot_template == False:
-            pickle.dump(plot1, open(path, "wb"))
-        else:
-            pickle.dump(plot1, open(path, "wb"))
-            return plot1
+        return _finish_plot_template(
+            plot1, path, return_plot_template, strict_cache
+        )
     elif context == "DBS78":
         plot_custom_text = False
         pcawg = False
@@ -1017,11 +1167,9 @@ def make_pickle_file(context="SBS96", return_plot_template=False, volume=None):
 
         [i.set_color("black") for i in plt.gca().get_yticklabels()]
         [i.set_color("grey") for i in plt.gca().get_xticklabels()]
-        if return_plot_template == False:
-            pickle.dump(plot1, open(path, "wb"))
-        else:
-            pickle.dump(plot1, open(path, "wb"))
-            return plot1
+        return _finish_plot_template(
+            plot1, path, return_plot_template, strict_cache
+        )
     elif context == "ID83":
         plt.rcParams["axes.linewidth"] = 2
         plot1 = plt.figure(figsize=(43.93, 12))
@@ -1541,11 +1689,9 @@ def make_pickle_file(context="SBS96", return_plot_template=False, volume=None):
 
         [i.set_color("black") for i in plt.gca().get_yticklabels()]
 
-        if return_plot_template == False:
-            pickle.dump(plot1, open(path, "wb"))
-        else:
-            pickle.dump(plot1, open(path, "wb"))
-            return plot1
+        return _finish_plot_template(
+            plot1, path, return_plot_template, strict_cache
+        )
 
 
 def getylabels(ylabels):
@@ -2148,6 +2294,7 @@ def plotCNV(
     :param project: name of project
     :param percentage: True if y-axis is displayed as percentage of CNV events, False if displayed as counts (default:False)
     :param aggregate: True if output is a single pdf of counts aggregated across samples(e.g for a given cancer type, y-axis will be counts per sample), False if output is a multi-page pdf of counts for each sample
+    :param read_from_file: Retained for API compatibility; input type is detected from matrix_path.
     >>> plotCNV()
 
     """
@@ -2638,17 +2785,13 @@ def plotCNV(
     if not os.path.exists(output_path) and savefig_format.lower() != "pil_image":
         os.makedirs(output_path)
 
-    df = pd.DataFrame()
-    if read_from_file:
-        if not os.path.exists(matrix_path):
-            raise FileNotFoundError(
-                errno.ENOENT, os.strerror(errno.ENOENT), matrix_path
-            )
-        df = pd.read_csv(
-            matrix_path, sep=None, engine="python"
-        )  # flexible reading of tsv or csv
-    else:
-        df = matrix_path
+    # ``process_input`` detects file and in-memory inputs directly. Keep the
+    # read_from_file argument for API compatibility, but do not let its default
+    # reject a DataFrame before input processing can inspect it.
+    if isinstance(matrix_path, str) and not os.path.exists(matrix_path):
+        raise FileNotFoundError(
+            errno.ENOENT, os.strerror(errno.ENOENT), matrix_path
+        )
 
     # To reindex the input data
     df = process_input(matrix_path, "48")
@@ -2657,8 +2800,16 @@ def plotCNV(
     labels = df[label]
     figs = {}
     if aggregate:
-        num_samples = len(df.columns) - 1
-        df["total_count"] = df.sum(axis=1) / num_samples  # NORMALIZE BY # of SAMPLES
+        sample_data = df.iloc[:, 1:]
+        if sample_data.shape[1] == 0:
+            raise ValueError("CNV aggregation requires at least one sample column.")
+        try:
+            sample_data = sample_data.apply(pd.to_numeric)
+        except (TypeError, ValueError) as error:
+            raise ValueError("CNV sample columns must contain numeric values.") from error
+        num_samples = sample_data.shape[1]
+        # Normalize the total event count in each channel by the number of samples.
+        df["total_count"] = sample_data.sum(axis=1) / num_samples
         counts = list(df["total_count"])
         if percentage and sum(counts) != 0:
             counts = [(x / sum(counts)) * 100 for x in counts]
@@ -2707,11 +2858,15 @@ def plotSBS(
             output_path: Path to a directory for saving the output.
             project: Name of unique sample set
             plot_type: Context of the mutational matrix (ie. 96, 288, 384, 1536)
-            savefig_format: Format of the output plot (pdf, png, or PIL_Image)
+            savefig_format: Format of the output plot. SBS96 and SBS288 support
+                pdf, png, and PIL_Image; legacy contexts support pdf only.
             volume: Path to the .pkl file containing the plot template. For Docker.
     Returns:
             Plot of the given input matrix.
     """
+    _require_pdf_for_legacy_context(
+        savefig_format, plot_type, {"96", "288"}, "plotSBS"
+    )
     plot_custom_text = False
     sig_probs = False
     pcawg = False
@@ -2794,7 +2949,7 @@ def plotSBS(
             while y % 4 != 0:
                 y += 1
 
-            y = ymax / 1.025
+            y = ymax / 1.025 if ymax > 0 else 4
             ytick_offest = float(y / 3)
 
             if percentage:
@@ -3011,7 +3166,7 @@ def plotSBS(
         )
 
     elif plot_type == "192" or plot_type == "96SB" or plot_type == "384":
-        with open(matrix_path) as f:
+        with _open_canonical_legacy_matrix(matrix_path, "384") as f:
             next(f)
             first_line = f.readline()
             first_line = first_line.strip().split()
@@ -3029,7 +3184,7 @@ def plotSBS(
         pp = PdfPages(file_path)
         mutations = OrderedDict()
         try:
-            with open(matrix_path) as f:
+            with _open_canonical_legacy_matrix(matrix_path, "384") as f:
                 first_line = f.readline()
                 if pcawg:
                     samples = first_line.strip().split(",")
@@ -3069,20 +3224,11 @@ def plotSBS(
                             sample_index = 1
 
                         for sample in samples:
-                            if percentage:
-                                mutCount = float(line[sample_index])
-                                if mutCount < 1 and mutCount > 0:
-                                    sig_probs = True
-                            else:
-                                try:
-                                    mutCount = int(line[sample_index])
-                                except:
-                                    print(
-                                        "It appears that the provided matrix does not contain mutation counts.\n\tIf you have provided a signature activity matrix, please change the percentage parameter to True.\n\tOtherwise, ",
-                                        end="",
-                                    )
-
-                                # mutCount = int(line[sample_index])
+                            mutCount = _parse_mutation_value(
+                                line[sample_index], percentage, sample, line[0]
+                            )
+                            if percentage and 0 < mutCount < 1:
+                                sig_probs = True
                             if nuc not in mutations[sample][mut_type].keys():
                                 mutations[sample][mut_type][nuc] = [0, 0]
                             if bias == "T":
@@ -3516,11 +3662,11 @@ def plotSBS(
                 sample_count += 1
             pp.close()
 
-        except:
-            print("There may be an issue with the formatting of your matrix file.")
+        except Exception:
             pdf_path = output_path + "SBS_384_plots_" + project + ".pdf"
             if os.path.isfile(pdf_path):
                 os.remove(pdf_path)
+            raise
 
     elif (
         plot_type == "192_extended"
@@ -4575,7 +4721,7 @@ def plotSBS(
                 os.remove(pdf_path)
 
     elif plot_type == "1536":
-        with open(matrix_path) as f:
+        with _open_canonical_legacy_matrix(matrix_path, "1536") as f:
             next(f)
             first_line = f.readline()
             first_line = first_line.strip().split()
@@ -4630,7 +4776,7 @@ def plotSBS(
         total_counts_3 = {"T": 0, "G": 0, "C": 0, "A": 0}
 
         try:
-            with open(matrix_path) as f:
+            with _open_canonical_legacy_matrix(matrix_path, "1536") as f:
                 first_line = f.readline()
                 if pcawg:
                     samples = first_line.strip().split(",")
@@ -4904,18 +5050,11 @@ def plotSBS(
                     for sample in samples:
                         if tri not in mutations_96[sample][mut_type]:
                             mutations_96[sample][mut_type][tri] = 0
-                        if percentage:
-                            mutCount = float(line[sample_index])
-                            if mutCount < 1 and mutCount > 0:
-                                sig_probs = True
-                        else:
-                            try:
-                                mutCount = int(line[sample_index])
-                            except:
-                                print(
-                                    "It appears that the provided matrix does not contain mutation counts.\n\tIf you have provided a signature activity matrix, please change the percentage parameter to True.\n\tOtherwise, ",
-                                    end="",
-                                )
+                        mutCount = _parse_mutation_value(
+                            line[sample_index], percentage, sample, line[0]
+                        )
+                        if percentage and 0 < mutCount < 1:
+                            sig_probs = True
 
                         if pcawg:
                             sample_ref = sample_index - 2
@@ -5900,14 +6039,14 @@ def plotSBS(
                 plt.close()
                 sample_count += 1
             pp.close()
-        except:
-            print("There may be an issue with the formatting of your matrix file.")
+        except Exception:
             pdf_path = output_path + "SBS_1536_plots_" + project + ".pdf"
             if os.path.isfile(pdf_path):
                 os.remove(pdf_path)
+            raise
 
     elif plot_type == "4608":
-        with open(matrix_path) as f:
+        with _open_canonical_legacy_matrix(matrix_path, "4608") as f:
             next(f)
             first_line = f.readline()
             first_line = first_line.strip().split()
@@ -5957,7 +6096,7 @@ def plotSBS(
 
         # try:
         if True:
-            with open(matrix_path) as f:
+            with _open_canonical_legacy_matrix(matrix_path, "4608") as f:
                 first_line = f.readline()
                 if pcawg:
                     samples = first_line.strip().split(",")
@@ -6240,22 +6379,11 @@ def plotSBS(
                     for sample in samples:
                         if tri not in mutations_96[sample][mut_type]:
                             mutations_96[sample][mut_type][tri] = 0
-                        if percentage:
-                            mutCount = float(line[sample_index])
-                            if mutCount < 1 and mutCount > 0:
-                                sig_probs = True
-                        else:
-                            try:
-                                mutCount = int(line[sample_index])
-                            except:
-                                print(
-                                    "It appears that the provided matrix does not contain mutation counts.\n\tIf you have provided a signature activity matrix, please change the percentage parameter to True.\n\tOtherwise, ",
-                                    end="",
-                                )
-                                print(
-                                    "There may be an issue with the formatting of your matrix file."
-                                )
-                                sys.exit(0)
+                        mutCount = _parse_mutation_value(
+                            line[sample_index], percentage, sample, line[0]
+                        )
+                        if percentage and 0 < mutCount < 1:
+                            sig_probs = True
 
                         if pcawg:
                             sample_ref = sample_index - 2
@@ -7366,6 +7494,7 @@ def plotSBS(
             total_count = np.sum(data[sample].values)
             muts = data[sample].values
             x = 0.4
+            ymax = 0
             if percentage:
                 if total_count > 0:
                     panel1.bar(
@@ -7395,7 +7524,7 @@ def plotSBS(
 
             while y % 4 != 0:
                 y += 1
-            y = ymax / 1.025
+            y = ymax / 1.025 if ymax > 0 else 4
             ytick_offest = float(y / 3)
 
             if percentage:
@@ -7617,7 +7746,7 @@ def plotSBS(
                 "green",
             ]
 
-            if percentage:
+            if percentage and total_count > 0:
                 y2max = (
                     np.max(
                         [
@@ -7648,7 +7777,27 @@ def plotSBS(
                     color=tsbColors[2],
                     label="Intergenic",
                 )
-
+            elif percentage:
+                y2max = 0
+                zeros = np.zeros(len(tsb_mats["T"][sample]))
+                panel2.barh(
+                    range(28, 1, -4),
+                    zeros,
+                    color=tsbColors[0],
+                    label="Genic-transcribed",
+                )
+                panel2.barh(
+                    range(27, 1, -4),
+                    zeros,
+                    color=tsbColors[1],
+                    label="Genic-untranscribed",
+                )
+                panel2.barh(
+                    range(26, 1, -4),
+                    zeros,
+                    color=tsbColors[2],
+                    label="Intergenic",
+                )
             else:
                 y2max = np.max(
                     [
@@ -8336,6 +8485,9 @@ def plotID(
     volume=None,
     dpi=100,
 ):
+    _require_pdf_for_legacy_context(
+        savefig_format, plot_type, {"94", "ID94", "94ID", "83"}, "plotID"
+    )
     # create the output directory if it doesn't exist
     if not os.path.exists(output_path) and savefig_format.lower() != "pil_image":
         os.makedirs(output_path)
@@ -8416,6 +8568,7 @@ def plotID(
                 muts = data[sample].values
                 total_count = np.sum(muts)
                 x = 0.4
+                ymax = 0
 
                 if percentage:
                     if total_count > 0:
@@ -10314,6 +10467,9 @@ def plotDBS(
     volume=None,
     dpi=100,
 ):
+    _require_pdf_for_legacy_context(
+        savefig_format, plot_type, {"78", "78DBS", "DBS78"}, "plotDBS"
+    )
     # create the output directory if it doesn't exist
     if not os.path.exists(output_path) and savefig_format.lower() != "pil_image":
         os.makedirs(output_path)
@@ -10459,6 +10615,7 @@ def plotDBS(
 
                 x = 0.4
                 muts = data[sample].values
+                ymax = 0
                 if percentage:
                     if total_count > 0:
                         plt.bar(
