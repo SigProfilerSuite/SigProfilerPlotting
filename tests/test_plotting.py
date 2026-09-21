@@ -196,11 +196,19 @@ def test_plot_generation(config_key, input_data):
         structure, chroma = image_similarities(
             cropped_test_image_path, standard_image_path
         )
+        with Image.open(cropped_test_image_path) as candidate_image, Image.open(
+            standard_image_path
+        ) as reference_image:
+            dimensions = (
+                f"candidate={candidate_image.size}, reference={reference_image.size}"
+            )
         assert structure >= MINIMUM_STRUCTURAL_SIMILARITY, (
             f"Images for {config_key}, {test_case} have a structural mismatch: "
-            f"SSIM={structure:.6f}, minimum={MINIMUM_STRUCTURAL_SIMILARITY:.6f}."
+            f"SSIM={structure:.6f}, minimum={MINIMUM_STRUCTURAL_SIMILARITY:.6f}; "
+            f"{dimensions}."
         )
         assert chroma >= MINIMUM_CHROMA_SIMILARITY, (
             f"Images for {config_key}, {test_case} have a color mismatch: "
-            f"chroma={chroma:.6f}, minimum={MINIMUM_CHROMA_SIMILARITY:.6f}."
+            f"chroma={chroma:.6f}, minimum={MINIMUM_CHROMA_SIMILARITY:.6f}; "
+            f"{dimensions}."
         )
