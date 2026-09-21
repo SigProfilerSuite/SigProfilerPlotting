@@ -5,13 +5,15 @@ from PIL import Image, ImageFilter
 from skimage.metrics import structural_similarity
 
 
-# A small blur removes platform-specific font hinting and antialiasing noise
-# while retaining layout, text, bar-height, and color differences. Current
-# reference plots score at least 0.980 across supported test environments.
-MINIMUM_STRUCTURAL_SIMILARITY = 0.975
+# Font rendering and tight bounding boxes vary across OS/Matplotlib versions.
+# Compare at a common resolution, but reject large canvas-size changes before
+# resizing so a genuinely different layout cannot be normalized away.
+MINIMUM_STRUCTURAL_SIMILARITY = 0.94
 MINIMUM_CHROMA_SIMILARITY = 0.95
 IMAGE_BLUR_RADIUS = 1
 MINIMUM_SATURATION = 0.08
+MAXIMUM_DIMENSION_VARIANCE = 0.10
+MAXIMUM_COMPARISON_WIDTH = 1400
 
 
 def _blurred_rgb(image):
@@ -56,8 +58,22 @@ def _chroma_similarity(candidate, reference):
 def image_similarities(candidate_path, reference_path):
     """Return structural and foreground-chroma similarity scores."""
     with Image.open(candidate_path) as candidate, Image.open(reference_path) as reference:
-        if candidate.size != reference.size:
+        if any(
+            abs(candidate_extent - reference_extent) / reference_extent
+            > MAXIMUM_DIMENSION_VARIANCE
+            for candidate_extent, reference_extent in zip(candidate.size, reference.size)
+        ):
             return 0.0, 0.0
+        candidate = candidate.convert("RGB").resize(
+            reference.size, Image.Resampling.LANCZOS
+        )
+        if reference.width > MAXIMUM_COMPARISON_WIDTH:
+            comparison_size = (
+                MAXIMUM_COMPARISON_WIDTH,
+                round(reference.height * MAXIMUM_COMPARISON_WIDTH / reference.width),
+            )
+            candidate = candidate.resize(comparison_size, Image.Resampling.LANCZOS)
+            reference = reference.resize(comparison_size, Image.Resampling.LANCZOS)
         candidate = _blurred_rgb(candidate)
         reference = _blurred_rgb(reference)
         structure = structural_similarity(

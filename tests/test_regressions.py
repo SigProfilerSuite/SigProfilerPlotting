@@ -343,6 +343,50 @@ def test_portable_image_comparison_rejects_missing_content(tmp_path):
     assert structure < MINIMUM_STRUCTURAL_SIMILARITY
 
 
+def test_portable_image_comparison_accepts_small_canvas_change(tmp_path):
+    reference_path = os.path.join(SPP_STANDARD_PNG, "CNV_48_plots_Random.png")
+    altered_path = tmp_path / "resized.png"
+    with Image.open(reference_path) as reference:
+        reference.resize(
+            (round(reference.width * 1.03), round(reference.height * 1.03)),
+            Image.Resampling.LANCZOS,
+        ).save(altered_path)
+
+    structure, chroma = image_similarities(altered_path, reference_path)
+    assert structure >= MINIMUM_STRUCTURAL_SIMILARITY
+    assert chroma >= MINIMUM_CHROMA_SIMILARITY
+
+
+def test_portable_image_comparison_rejects_large_canvas_change(tmp_path):
+    reference_path = os.path.join(SPP_STANDARD_PNG, "CNV_48_plots_Random.png")
+    altered_path = tmp_path / "stretched.png"
+    with Image.open(reference_path) as reference:
+        reference.resize(
+            (round(reference.width * 1.25), reference.height),
+            Image.Resampling.LANCZOS,
+        ).save(altered_path)
+
+    assert image_similarities(altered_path, reference_path) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    "reference_name", ["CNV_48_plots_bars.png", "SV_32_plots_bars.png"]
+)
+def test_portable_image_comparison_rejects_missing_bars(tmp_path, reference_name):
+    reference_path = os.path.join(SPP_STANDARD_PNG, reference_name)
+    altered_path = tmp_path / "missing-bars.png"
+    with Image.open(reference_path) as reference:
+        altered = np.asarray(reference.convert("RGB")).copy()
+    altered[2 * altered.shape[0] // 3 :, :, :] = 255
+    Image.fromarray(altered).save(altered_path)
+
+    structure, chroma = image_similarities(altered_path, reference_path)
+    assert (
+        structure < MINIMUM_STRUCTURAL_SIMILARITY
+        or chroma < MINIMUM_CHROMA_SIMILARITY
+    )
+
+
 @pytest.mark.parametrize(
     "reference_name",
     [
