@@ -3,7 +3,6 @@ import sigProfilerPlotting as sigPlt
 import pytest
 import os
 from sigProfilerPlotting import process_input, get_context_reference
-import pkg_resources
 
 
 # Path to the tests directory
