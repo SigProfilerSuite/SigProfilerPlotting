@@ -1,42 +1,6 @@
-import os
-import shutil
-
 from setuptools import setup
-from setuptools.command.install import install
 
-# remove the dist folder first if exists
-if os.path.exists("dist"):
-    shutil.rmtree("dist")
-
-
-def readme():
-    with open("README.rst") as f:
-        return f.read()
-
-
-VERSION = "1.4.3"
-
-
-def write_version_py(filename="sigProfilerPlotting/version.py"):
-    # Copied from numpy setup.py
-    cnt = """
-# THIS FILE IS GENERATED FROM SIGPROFILERPLOTTING SETUP.PY
-short_version = '%(version)s'
-version = '%(version)s'
-update = 'v1.4.3: Fix pandas 3.12 compatibility issues in tmbplot.py'
-    
-    """
-    fh = open(filename, "w")
-    fh.write(
-        cnt
-        % {
-            "version": VERSION,
-        }
-    )
-    fh.close()
-
-
-write_version_py()
+VERSION_TEMPLATE = "version = '{version}'\n"
 
 
 with open("README.md") as f:
@@ -44,7 +8,11 @@ with open("README.md") as f:
 
 setup(
     name="sigProfilerPlotting",
-    version=VERSION,
+    use_scm_version={
+        "write_to": "sigProfilerPlotting/_version.py",
+        "write_to_template": VERSION_TEMPLATE,
+        "fallback_version": "0+unknown",
+    },
     description="SigProfiler plotting tool",
     long_description=readme,
     long_description_content_type="text/markdown",

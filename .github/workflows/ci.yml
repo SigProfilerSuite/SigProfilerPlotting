@@ -47,8 +47,10 @@ jobs:
       if: github.ref == 'refs/heads/master' && github.event_name == 'push' && matrix.python-version == '3.12'
       run: |
         echo "Starting Docker deployment to GHCR for sigprofilersuite..."
-        
-        VERSION_TAG=$(grep "VERSION = " setup.py | cut -d'"' -f2)
+
+        python -m pip install --upgrade setuptools_scm
+        VERSION_TAG=$(python -m setuptools_scm)
+        VERSION_TAG=${VERSION_TAG//+/-}
         
         # Get the repository name and convert it to lowercase
         REPO_NAME=$(basename ${{ github.repository }} | tr '[:upper:]' '[:lower:]')
