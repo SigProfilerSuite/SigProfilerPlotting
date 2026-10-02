@@ -1,0 +1,53 @@
+name: Create version tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without leading v, for example x.y.z"
+        required: true
+        type: string
+      target_branch:
+        description: "Branch to tag"
+        required: true
+        default: "master"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version
+        run: |
+          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must look like x.y.z"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          tag="v${{ inputs.version }}"
+
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists locally"
+            exit 1
+          fi
+
+          if git ls-remote --tags origin "$tag" | grep -q "$tag"; then
+            echo "Tag $tag already exists on origin"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$tag" -m "SigProfilerPlotting $tag"
+          git push origin "$tag"
