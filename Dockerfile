@@ -15,6 +15,10 @@ ARG COMMIT_SHA=master
 # Set the working directory in the container
 WORKDIR /usr/src/app
 
+# Ubuntu 22.04 ships pip/setuptools versions that are too old for the
+# setuptools_scm build backend used by this project.
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
 # Install the package directly from the specific commit on GitHub
 RUN pip3 install 'git+https://github.com/sigprofilersuite/SigProfilerPlotting.git@'${COMMIT_SHA}
 
