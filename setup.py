@@ -25,6 +25,7 @@ setup(
         "sigProfilerPlotting.reference_formats",
         "sigProfilerPlotting.fonts",
         "sigProfilerPlotting.controllers",
+        "sigProfilerPlotting.sbs4608",
     ],
     python_requires=">=3.9",
     install_requires=[
@@ -32,6 +33,9 @@ setup(
         "pandas>=2.0.0",
         "scikit-learn>=1.1.3",
         "pillow>=10.0.0",
+        "plotly>=6.1.1",
+        "kaleido>=1.0.0",
+        "pypdf>=5.0.0",
     ],
     extras_require={
         "tests": [
