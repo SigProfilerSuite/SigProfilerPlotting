@@ -65,6 +65,7 @@ nav:
     - R: Installation-R.md
   - Usage:
     - Plotting Substitutions: Plotting-Substitutions.md
+    - Plotting SBS4608: Plotting-SBS4608.md
     - Plotting Indels: Plotting-Indels.md
     - Plotting Dinucleotides: Plotting-Dinucleotides.md
     - Plotting a Sample Portrait: Plotting-a-Sample-Portrait.md
