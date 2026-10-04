@@ -13,7 +13,7 @@ bars, the 5-base-context total heatmap, and the detailed front/back
 heatmaps on or off. Both controls work purely client side -- all three main
 plot variants are precomputed and embedded up front, and switching between
 them (or toggling a checkbox) just swaps/shows/hides the relevant Plotly
-traces and axis labels (Plotly.react / restyle / relayout), no data is
+traces and repacks the visible panels (Plotly.react), no data is
 re-fetched or regenerated.
 
 Unlike plotSBS(matrix, output_path, project, "4608", ...), which draws a
@@ -128,18 +128,92 @@ nav.toc a:hover {{ background: #e2ecff; }}
 {plot_options_html}
 {sections}
 <script>
+const PLOT_READY = [];
 {plot_calls}
 
 const PLOTS = {plot_registry};
+PLOTS.forEach((p, index) => {{ p.pending = PLOT_READY[index]; }});
 
-const SECTION_AXIS_OVERRIDES = {{
-  total_heatmap: on => ({{'yaxis4.showticklabels': on, 'yaxis4.showline': on}}),
-  detailed_heatmaps: on => ({{
-    'yaxis2.showticklabels': on, 'yaxis2.showline': on,
-    'yaxis3.showticklabels': on, 'yaxis3.showline': on,
-  }}),
-  transcription_bias: on => ({{'xaxis2.showticklabels': on, 'xaxis3.showticklabels': on}}),
+const SECTION_AXES = {{
+  total_heatmap: ['yaxis4'],
+  detailed_heatmaps: ['yaxis2', 'yaxis3'],
+  transcription_bias: ['yaxis5', 'yaxis6', 'xaxis2', 'xaxis3'],
 }};
+
+function compactPlot(variant, toggles) {{
+  // Start from immutable full-layout data so repeated toggles cannot drift.
+  const traces = JSON.parse(JSON.stringify(variant.traces));
+  const layout = JSON.parse(JSON.stringify(variant.layout));
+  const removed = [];
+  for (const [key, sec] of Object.entries(variant.sections)) {{
+    const on = toggles[key];
+    const [start, end] = sec.trace_range;
+    if (!on && end > start) removed.push([...sec.paper_band]);
+    for (let i = start; i < end; i++) traces[i].visible = on;
+    SECTION_AXES[key].forEach(axis => {{
+      if (layout[axis]) layout[axis].visible = on && end > start;
+    }});
+    (sec.annotation_indices || []).forEach(index => {{
+      layout.annotations[index].visible = on;
+    }});
+  }}
+  const detailedRange = variant.sections.detailed_heatmaps.trace_range;
+  const anyHeatmap = toggles.total_heatmap ||
+    (toggles.detailed_heatmaps && detailedRange[1] > detailedRange[0]);
+  const needsMainLegend = !toggles.transcription_bias &&
+    variant.main_plot_type !== 'default';
+  if (needsMainLegend) {{
+    // Preserve a compact footer for the strand/genic legend. Without it the
+    // original bottom-right legend overlaps any heatmap that moves downward.
+    const biasBand = removed.find(band => band[0] === 0);
+    if (biasBand) biasBand[0] = 0.055;
+    layout.legend = {{
+      ...(layout.legend || {{}}),
+      orientation: 'h',
+      x: 0.5,
+      xanchor: 'center',
+      y: 0.012,
+      yanchor: 'bottom',
+    }};
+  }} else if (!toggles.transcription_bias) {{
+    layout.showlegend = false;
+  }}
+  if (toggles.transcription_bias && !anyHeatmap && removed.length) {{
+    // Keep a small label gutter, not a missing panel, below the main x labels.
+    const topBand = removed.reduce((a, b) => a[1] > b[1] ? a : b);
+    topBand[1] -= 0.04;
+  }}
+  const remaining = 1 - removed.reduce((sum, band) => sum + band[1] - band[0], 0);
+  const mapY = y => (y - removed.reduce((sum, [lo, hi]) =>
+    sum + Math.max(0, Math.min(y, hi) - lo), 0)) / remaining;
+  for (const [key, axis] of Object.entries(layout)) {{
+    if (!/^yaxis\\d*$/.test(key) || !axis.domain) continue;
+    if (axis.visible === false) axis.domain = [0, 0.001];
+    else axis.domain = axis.domain.map(mapY);
+  }}
+  (layout.annotations || []).forEach(annotation => {{
+    if (annotation.yref === 'paper') annotation.y = mapY(annotation.y);
+  }});
+  (layout.shapes || []).forEach(shape => {{
+    if (shape.yref === 'paper') {{
+      shape.y0 = mapY(shape.y0);
+      shape.y1 = mapY(shape.y1);
+    }}
+  }});
+  traces.forEach(trace => {{
+    if (trace.visible === false || !trace.colorbar) return;
+    if (trace.colorbar.y !== undefined) trace.colorbar.y = mapY(trace.colorbar.y);
+    if (trace.colorbar.len !== undefined && trace.colorbar.lenmode !== 'pixels')
+      trace.colorbar.len /= remaining;
+  }});
+  if (layout.legend && layout.legend.y !== undefined)
+    layout.legend.y = mapY(layout.legend.y);
+  const margin = layout.margin || {{}};
+  const verticalMargins = (margin.t === undefined ? 100 : margin.t) +
+    (margin.b === undefined ? 80 : margin.b);
+  layout.height = Math.round(verticalMargins + (layout.height - verticalMargins) * remaining);
+  return {{traces, layout}};
+}}
 
 function applyPlotOptions() {{
   const optBias = document.getElementById('opt-bias');
@@ -151,39 +225,20 @@ function applyPlotOptions() {{
     detailed_heatmaps: optDetailed ? optDetailed.checked : true,
   }};
 
-  PLOTS.forEach(p => {{
-    const visible = new Array(p.numTraces).fill(true);
-    let layoutUpdate = {{}};
-
-    for (const [key, sec] of Object.entries(p.sections)) {{
-      const on = toggles[key];
-      const [start, end] = sec.trace_range;
-      for (let i = start; i < end; i++) visible[i] = on;
-      layoutUpdate = {{...layoutUpdate, ...SECTION_AXIS_OVERRIDES[key](on)}};
-      (sec.annotation_indices || []).forEach(idx => {{
-        layoutUpdate[`annotations[${{idx}}].opacity`] = on ? 1 : 0;
-      }});
-    }}
-
-    Plotly.restyle(p.div, {{visible: visible}});
-    Plotly.relayout(p.div, layoutUpdate);
-  }});
+  const select = document.getElementById('main-plot-type-select');
+  const chosen = select ? select.value : 'default';
+  return Promise.all(PLOTS.map(p => {{
+    const variant = p.variants[chosen];
+    const compact = compactPlot(variant, toggles);
+    // Serialize renders for each figure when controls are changed rapidly.
+    p.pending = p.pending.then(() =>
+      Plotly.react(p.div, compact.traces, compact.layout, variant.config));
+    return p.pending;
+  }}));
 }}
 
 function applyMainPlotType() {{
-  const select = document.getElementById('main-plot-type-select');
-  const chosen = select ? select.value : 'default';
-
-  PLOTS.forEach(p => {{
-    const variant = p.variants[chosen];
-    if (!variant) return;
-    Plotly.react(p.div, variant.traces, variant.layout, variant.config);
-    p.sections = variant.sections;
-    p.numTraces = variant.traces.length;
-  }});
-
-  // Re-apply the current checkbox states, since react() resets trace visibility.
-  applyPlotOptions();
+  return applyPlotOptions();
 }}
 </script>
 </body>
@@ -275,7 +330,19 @@ def plotInteractive(
             )
             builder = SBS4608PlotBuilder(data, config)
             fig = builder.build()
+            total_top = (
+                config.total_heatmap_domain[1]
+                if include_detailed_heatmaps
+                else config.main_plot_domain[0]
+            )
+            fig["sections"]["total_heatmap"]["paper_band"] = [0.19, total_top]
+            fig["sections"]["detailed_heatmaps"]["paper_band"] = [
+                total_top,
+                config.main_plot_domain[0],
+            ]
+            fig["sections"]["transcription_bias"]["paper_band"] = [0, 0.19]
             variants[mpt] = {
+                "main_plot_type": mpt,
                 "traces": fig["traces"],
                 "layout": fig["layout"],
                 "config": fig["config"],
@@ -288,9 +355,9 @@ def plotInteractive(
             f'<div class="plot" id="{div_id}"></div>'
         )
         plot_calls.append(
-            f'Plotly.newPlot("{div_id}", {_json_for_script(initial["traces"])}, '
+            f'PLOT_READY.push(Plotly.newPlot("{div_id}", {_json_for_script(initial["traces"])}, '
             f'{_json_for_script(initial["layout"])}, '
-            f'{_json_for_script(initial["config"])});'
+            f'{_json_for_script(initial["config"])}));'
         )
         plot_registry.append(
             {

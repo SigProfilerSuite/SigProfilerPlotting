@@ -1,4 +1,7 @@
 from pathlib import Path
+import json
+import shutil
+import subprocess
 
 import pytest
 
@@ -98,6 +101,64 @@ def test_plot_interactive_handles_zero_counts_and_escapes_labels(tmp_path):
     assert "applyPlotOptions" in html
     assert '<script src="https://cdn.plot.ly/' not in html
     assert "plotly.js v" in html
+
+
+@pytest.mark.parametrize("include_details", [False, True])
+def test_interactive_options_compact_and_restore_subplot_layout(
+    tmp_path, include_details
+):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to exercise client-side layout calculations")
+    matrix = _write_sbs4608_matrix(tmp_path / "matrix.tsv")
+    output = Path(
+        plotInteractive(
+            matrix,
+            "compact",
+            output_path=tmp_path,
+            include_detailed_heatmaps=include_details,
+        )
+    )
+    html = output.read_text(encoding="utf-8")
+    registry = json.JSONDecoder().raw_decode(html.split("const PLOTS = ", 1)[1])[0]
+    function = html.split("function compactPlot(", 1)[1].split(
+        "function applyPlotOptions", 1
+    )[0]
+    script = "const assert = require('node:assert/strict');\n"
+    script += "const SECTION_AXES = {total_heatmap:['yaxis4'], detailed_heatmaps:['yaxis2','yaxis3'], transcription_bias:['yaxis5','yaxis6','xaxis2','xaxis3']};\n"
+    script += "function compactPlot(" + function
+    script += "const variants = " + json.dumps(registry[0]["variants"]) + ";\n"
+    script += """
+    for (const variant of Object.values(variants)) {
+      const original = JSON.stringify(variant);
+      const enabled = {total_heatmap:true, detailed_heatmaps:true, transcription_bias:true};
+      for (let bits = 0; bits < 8; bits++) {
+        const options = {total_heatmap:!!(bits & 1), detailed_heatmaps:!!(bits & 2), transcription_bias:!!(bits & 4)};
+        const result = compactPlot(variant, options);
+        assert.ok(result.layout.height <= variant.layout.height);
+        for (const [name, sec] of Object.entries(variant.sections)) {
+          for (let i = sec.trace_range[0]; i < sec.trace_range[1]; i++)
+            assert.equal(result.traces[i].visible, options[name]);
+        }
+        const expectedMainPixels = (variant.layout.height - 180) * (variant.layout.yaxis.domain[1] - variant.layout.yaxis.domain[0]);
+        const actualMainPixels = (result.layout.height - 180) * (result.layout.yaxis.domain[1] - result.layout.yaxis.domain[0]);
+        assert.ok(Math.abs(expectedMainPixels - actualMainPixels) < 1);
+        if (bits === 0) assert.ok(result.layout.height < 600);
+        if (!options.transcription_bias && variant.main_plot_type !== 'default') {
+          assert.equal(result.layout.legend.orientation, 'h');
+          assert.equal(result.layout.legend.x, 0.5);
+          assert.ok(result.layout.legend.y >= 0);
+        }
+        if (!options.transcription_bias && variant.main_plot_type === 'default')
+          assert.equal(result.layout.showlegend, false);
+        const restored = compactPlot(variant, enabled);
+        assert.equal(restored.layout.height, variant.layout.height);
+        assert.deepEqual(restored.layout.yaxis.domain, variant.layout.yaxis.domain);
+        assert.equal(JSON.stringify(variant), original);
+      }
+    }
+    """
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
 
 
 def test_count_matrices_are_normalized_to_percentages(tmp_path):
