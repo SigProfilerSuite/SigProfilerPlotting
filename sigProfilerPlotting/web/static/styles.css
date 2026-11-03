@@ -1,0 +1,206 @@
+/* SigProfilerPlotting dashboard. Light only: the plots paint their own white
+   ground, and a dark page around them would frame every figure in a glare.
+   No web fonts: this page has to work with no network at all. */
+
+:root {
+  color-scheme: light;
+  --ground: #f3f5f8;
+  --surface: #ffffff;
+  --ink: #1c2631;
+  --muted: #5a6774;
+  --line: #d8dee6;
+  --accent: #1d6a86;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3f0f5;
+  --error: #a8261b;
+  --error-soft: #fcebe9;
+  --radius: 8px;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.45 var(--sans);
+  /* The header and the controls stay put; only the plots scroll. */
+  height: 100vh;
+  display: flex; flex-direction: column;
+}
+
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+
+.hidden { display: none !important; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- frame */
+
+.topbar {
+  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  padding: 14px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.topbar h1 { font-size: 17px; font-weight: 650; }
+.topbar h1 span { color: var(--muted); font-weight: 450; }
+.summary {
+  margin: 0; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell {
+  flex: 1 1 auto; min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+}
+
+.sidebar {
+  min-height: 0;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.content {
+  min-width: 0; min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 40px;
+}
+
+/* --------------------------------------------------------------- panels */
+
+.panel {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.panel.grow { flex: 1 1 auto; min-height: 0; }
+.panel h2 {
+  font-size: 11px; font-weight: 650; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+.hint { margin: 0; color: var(--muted); font-size: 12.5px; }
+
+.error {
+  margin: 0; padding: 8px 10px;
+  color: var(--error); background: var(--error-soft);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+button, .file-button {
+  font: inherit;
+  padding: 6px 12px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer;
+}
+button:hover:not(:disabled), .file-button:hover { border-color: var(--accent); }
+button:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
+
+.file-button {
+  display: block; text-align: center; font-weight: 600;
+  color: var(--accent-ink); background: var(--accent); border-color: var(--accent);
+}
+.file-button:hover { filter: brightness(1.08); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel:has(#matrixFile:focus-visible) .file-button { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.row { display: flex; gap: 8px; }
+.row button { flex: 1; }
+
+.search {
+  width: 100%;
+  font: inherit; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+
+/* A two- or three-way switch built from radio buttons, so the keyboard and
+   screen readers get a real radio group. */
+.segmented {
+  display: grid; grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.segmented.three { grid-template-columns: 1fr 1fr 1fr; }
+.segmented.three span { font-size: 12px; white-space: nowrap; padding-inline: 2px; }
+.segmented label { position: relative; cursor: pointer; }
+.segmented label + label { border-left: 1px solid var(--line); }
+.segmented input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.segmented span {
+  display: block; padding: 6px 4px; text-align: center; font-size: 13px;
+}
+.segmented input:checked + span { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.sample-list {
+  list-style: none; margin: 0; padding: 0;
+  flex: 1 1 auto; min-height: 120px; overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+.sample-list li { border-bottom: 1px solid var(--line); }
+.sample-list label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 2px; cursor: pointer;
+}
+.sample-list span { overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
+.sample-list input { accent-color: var(--accent); flex: none; }
+
+/* ---------------------------------------------------------------- plots */
+
+.empty {
+  max-width: 62ch; margin: 48px auto; text-align: center; color: var(--muted);
+}
+.empty h2 { color: var(--ink); font-size: 18px; margin-bottom: 8px; }
+
+.plots { display: flex; flex-direction: column; gap: 16px; }
+
+.card {
+  padding: 12px 12px 6px;
+  background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
+.card-title {
+  font-family: var(--mono); font-size: 13.5px; font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.card-status { margin-top: 4px; }
+.card-status.error { color: var(--error); }
+
+/* Room is held for a plot before it arrives, so the end of the page stays
+   out of view and does not ask for the next page early. */
+.plot-scroll { overflow-x: auto; }
+.plot { min-height: 520px; }
+.card[data-state="ready"] .plot { min-height: 0; }
+
+.more {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin-top: 16px;
+}
+#sentinel { height: 1px; }
+
+/* --------------------------------------------------------------- narrow */
+
+@media (max-width: 820px) {
+  body { height: auto; display: block; }
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .sidebar, .content { overflow: visible; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+  .sample-list { max-height: 40vh; }
+  .content { padding: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; }
+}
