@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import traceback
 from email import policy
 from email.parser import BytesParser
 from http import HTTPStatus
@@ -164,6 +165,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._reject(HTTPStatus.NOT_FOUND, "Not found.")
         except BrokenPipeError:
             pass
+        except Exception as exc:  # noqa: BLE001 - see _handle_unexpected_error
+            self._handle_unexpected_error(exc)
 
     def _serve_index(self) -> None:
         index_path = STATIC_ROOT / "index.html"
@@ -216,6 +219,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if not self._check_host():
             return
+        try:
+            self._dispatch_post()
+        except BrokenPipeError:
+            pass
+        except Exception as exc:  # noqa: BLE001 - see _handle_unexpected_error
+            self._handle_unexpected_error(exc)
+
+    def _dispatch_post(self) -> None:
         parsed = urlsplit(self.path)
         if parsed.path != "/api/matrix":
             self._reject(HTTPStatus.NOT_FOUND, "Not found.")
@@ -241,3 +252,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "labels_count": len(matrix.labels),
             },
         )
+
+    def _handle_unexpected_error(self, exc: Exception) -> None:
+        # A bug anywhere in parsing/rendering must not silently drop the
+        # connection (the client only ever sees an opaque "Failed to fetch"
+        # for that) -- log the real traceback server-side for diagnosis and
+        # still return a normal JSON error response.
+        traceback.print_exc()
+        try:
+            self._reject(HTTPStatus.INTERNAL_SERVER_ERROR, f"Internal server error: {exc}")
+        except Exception:
+            pass  # the connection is already broken; nothing more to do
