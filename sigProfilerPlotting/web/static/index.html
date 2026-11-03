@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SigProfilerPlotting Dashboard</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/plotly.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>SigProfilerPlotting <span>dashboard</span></h1>
+  <p id="matrixSummary" class="summary" aria-live="polite">No matrix loaded</p>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" aria-label="Controls">
+    <section class="panel">
+      <h2>Matrix</h2>
+      <label class="file-button" for="matrixFile">Choose a matrix file</label>
+      <input id="matrixFile" class="visually-hidden" type="file"
+             accept=".txt,.tsv,.csv,.all,text/plain,text/tab-separated-values,text/csv">
+      <p id="fileName" class="hint">Tab- or comma-delimited, with a MutationType column.</p>
+      <p id="matrixError" class="error hidden" role="alert"></p>
+    </section>
+
+    <section class="panel" id="unitPanel">
+      <h2>Values</h2>
+      <div class="segmented" role="radiogroup" aria-label="Values">
+        <label><input type="radio" name="unit" value="counts" checked><span>Counts</span></label>
+        <label><input type="radio" name="unit" value="percent"><span>Percentage</span></label>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="variantPanel">
+      <h2>SBS4608 top panel</h2>
+      <div class="segmented three" role="radiogroup" aria-label="SBS4608 top panel">
+        <label><input type="radio" name="variant" value="default" checked><span>Default</span></label>
+        <label><input type="radio" name="variant" value="strand_bias"><span>Strand bias</span></label>
+        <label><input type="radio" name="variant" value="genic_bias"><span>Genic bias</span></label>
+      </div>
+    </section>
+
+    <section class="panel grow" id="samplePanel">
+      <h2>Samples and signatures</h2>
+      <input id="sampleSearch" class="search" type="search" placeholder="Search"
+             aria-label="Search samples and signatures" disabled>
+      <div class="row">
+        <button id="selectAll" type="button" disabled>Select all</button>
+        <button id="clearAll" type="button" disabled>Clear all</button>
+      </div>
+      <p id="selectionCount" class="hint" aria-live="polite"></p>
+      <ul id="sampleList" class="sample-list" aria-label="Samples and signatures"></ul>
+      <p id="noMatch" class="hint hidden">Nothing matches the search.</p>
+    </section>
+  </aside>
+
+  <main class="content">
+    <div id="emptyState" class="empty">
+      <h2>Load a matrix to begin</h2>
+      <p>Choose a SigProfiler matrix file. Its mutation context is detected from the
+         rows, and each sample or signature you select is drawn as an interactive
+         plot: hover for values, drag to zoom, double-click to reset, and use the
+         toolbar above each plot to pan or download it.</p>
+    </div>
+    <div id="plots" class="plots"></div>
+    <div id="more" class="more hidden">
+      <p id="moreText" class="hint"></p>
+      <button id="loadMore" type="button">Load more</button>
+    </div>
+    <div id="sentinel" aria-hidden="true"></div>
+  </main>
+</div>
+
+<template id="cardTemplate">
+  <article class="card">
+    <h3 class="card-title"></h3>
+    <p class="card-status hint">Loading</p>
+    <div class="plot-scroll"><div class="plot"></div></div>
+  </article>
+</template>
+</body>
+</html>
