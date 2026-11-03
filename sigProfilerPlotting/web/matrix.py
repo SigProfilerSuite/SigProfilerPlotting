@@ -10,6 +10,14 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Iterable
 
+from ..sigProfilerPlotting import INDEX_VALS
+
+# Reuse the package's own canonical header names (sigProfilerPlotting.py's
+# INDEX_VALS, e.g. the "index" name pandas writes by default) rather than
+# maintaining a second, drift-prone list here -- plus "context", which the
+# dashboard accepts as an extra, more descriptive alias.
+MUTATION_TYPE_HEADER_ALIASES = {name.lower() for name in INDEX_VALS} | {"context"}
+
 
 class MatrixError(ValueError):
     """An actionable error in a matrix supplied to the dashboard."""
@@ -142,8 +150,7 @@ def _decode(source) -> tuple[list[list[str]], str]:
 
 def _from_dataframe(frame) -> tuple[list[list[object]], str]:
     columns = [str(c).strip() for c in frame.columns]
-    first_aliases = {"mutationtype", "mutation types", "classification", "context"}
-    if columns and columns[0].lower() in first_aliases:
+    if columns and columns[0].lower() in MUTATION_TYPE_HEADER_ALIASES:
         labels = frame.iloc[:, 0].tolist()
         sample_columns = columns[1:]
         data = frame.iloc[:, 1:].values.tolist()
@@ -173,11 +180,10 @@ def load_matrix(source) -> MatrixData:
     if width < 2:
         raise MatrixError("The header must contain a context column and at least one sample/signature.")
     header = [str(value).strip() for value in rows[0]]
-    aliases = {"mutationtype", "mutation types", "classification", "context"}
-    if header[0].lower() not in aliases:
+    if header[0].lower() not in MUTATION_TYPE_HEADER_ALIASES:
         raise MatrixError(
             "The first column must identify mutation contexts (MutationType, Mutation Types, "
-            "classification, or context)."
+            "classification, index, or context)."
         )
     columns = header[1:]
     if any(not column for column in columns):
