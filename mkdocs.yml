@@ -69,6 +69,7 @@ nav:
     - Plotting Indels: Plotting-Indels.md
     - Plotting Dinucleotides: Plotting-Dinucleotides.md
     - Plotting a Sample Portrait: Plotting-a-Sample-Portrait.md
+    - Interactive Dashboard: Plotting-Dashboard.md
     - Example Program: Example-Program.md
 
 extra:

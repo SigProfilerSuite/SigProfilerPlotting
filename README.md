@@ -136,6 +136,17 @@ from sigProfilerPlotting import sample_portrait as sP
 sP.samplePortrait(sample_matrices_path, output_path, project, percentage=False)
 ```
 
+## Interactive Dashboard
+
+A local, browser-based dashboard lets you upload any supported matrix and
+explore it interactively (search, select samples, toggle counts/percentage,
+hover/zoom/pan/export) without writing any Python. From a cloned repository,
+run one of the one-click launchers in the repo root (`launch_dashboard.sh`,
+`launch_dashboard.command`, or `launch_dashboard.bat`); after `pip install`,
+run the installed `sigprofilerplotting-web` command instead. See
+[the dashboard docs](https://sigprofilersuite.github.io/SigProfilerPlotting/Plotting-Dashboard.html)
+for full usage, supported contexts, and troubleshooting.
+
 **EXAMPLE**
 
 This package comes with an example test for each plot type. Run the script plot_example.py from within the examples directory in the downloaded repo after installation:
