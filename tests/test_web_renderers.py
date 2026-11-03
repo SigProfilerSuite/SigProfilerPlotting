@@ -83,14 +83,59 @@ def test_unknown_sample_raises_actionable_error(tmp_path):
         render_sample(matrix, "DoesNotExist")
 
 
-def test_sbs96_renderer_groups_by_substitution_type():
-    values = {label: 1.0 for label in [
-        "A[C>A]A", "A[C>G]A", "A[C>T]A", "A[T>A]A", "A[T>C]A", "A[T>G]A",
-    ]}
+def test_sbs96_renderer_uses_the_classic_display_order_and_colors():
+    from sigProfilerPlotting.web.renderers import SBS96_DISPLAY_ORDER, SBS_COLORS
+
+    # One count per label so each bar's position tells us which label landed
+    # there: give "A[C>A]A" (the first label in the classic display order)
+    # a distinct value to confirm the renderer re-sorts away from
+    # REFERENCE_CONTEXTS["SBS96"]'s own (differently ordered) row order.
+    values = {label: 1.0 for label in SBS96_DISPLAY_ORDER}
+    values["A[C>A]A"] = 7.0
     matrix = _sbs96_matrix(values)
     figure = render_sample(matrix, "S1", unit="counts")
-    groups = {trace["name"] for trace in figure["figure"]["traces"]}
-    assert groups == {"C>A", "C>G", "C>T", "T>A", "T>C", "T>G"}
+    assert figure["kind"] == "standard"
+
+    traces = figure["figure"]["traces"]
+    assert len(traces) == 1  # a single bar trace, not one-trace-per-group
+    trace = traces[0]
+    assert len(trace["y"]) == 96
+    assert trace["y"][0] == pytest.approx(7.0)  # SBS96_DISPLAY_ORDER[0] == "A[C>A]A"
+    assert list(trace["customdata"]) == SBS96_DISPLAY_ORDER
+
+    # Each bar's color matches its own substitution-type group.
+    for label, color in zip(SBS96_DISPLAY_ORDER, trace["marker"]["color"]):
+        substitution = label[2:5]
+        assert color == SBS_COLORS[substitution]
+
+    # Six colored header-band shapes (one per substitution type) instead of
+    # a legend, and no legend is shown.
+    layout = figure["figure"]["layout"]
+    assert layout["showlegend"] is False
+    assert "legend" not in layout
+    assert len(layout["shapes"]) == 6
+    header_labels = {a["text"] for a in layout["annotations"] if a["text"].strip("<b>/") in
+                     {"C>A", "C>G", "C>T", "T>A", "T>C", "T>G"}}
+    assert header_labels == {"<b>C>A</b>", "<b>C>G</b>", "<b>C>T</b>", "<b>T>A</b>", "<b>T>C</b>", "<b>T>G</b>"}
+
+
+@pytest.mark.parametrize("unit, expected_title", [
+    ("counts", "Number of Single Base Substitutions"),
+    ("percent", "Percentage of Single Base Substitutions"),
+    ("proportion", "Proportion of Single Base Substitutions"),
+])
+def test_sbs96_renderer_uses_the_classic_axis_title_per_unit(unit, expected_title):
+    matrix = _sbs96_matrix({"A[C>A]A": 3.0})
+    figure = render_sample(matrix, "S1", unit=unit)
+    assert figure["figure"]["layout"]["yaxis"]["title"]["text"] == expected_title
+
+
+def test_sbs96_renderer_percent_and_proportion_sum_correctly():
+    matrix = _sbs96_matrix({"A[C>A]A": 3.0, "A[C>G]A": 1.0})
+    percent_ys = render_sample(matrix, "S1", unit="percent")["figure"]["traces"][0]["y"]
+    proportion_ys = render_sample(matrix, "S1", unit="proportion")["figure"]["traces"][0]["y"]
+    assert sum(percent_ys) == pytest.approx(100.0)
+    assert sum(proportion_ys) == pytest.approx(1.0)
 
 
 def test_cnv48_renderer_groups_by_cnv_class(tmp_path):

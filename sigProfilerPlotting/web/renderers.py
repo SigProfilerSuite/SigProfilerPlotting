@@ -13,6 +13,20 @@ SBS_COLORS = {
 }
 PALETTE = ["#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B", "#EECA3B", "#B279A2", "#FF9DA6"]
 
+SBS96_SUBSTITUTIONS = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
+# The classic SigProfilerPlotting SBS96 display order groups all 16 contexts
+# of one substitution type together (5' flank, then 3' flank) -- this is
+# `seq96` in sigProfilerPlotting.py's plotSBS "96" branch, reproduced here as
+# a generator rather than copying that 96-line literal. It differs from
+# reference_formats/SBS96.txt's own row order (grouped by 5' flank first),
+# which is why matrix.labels can't be used directly for this layout.
+SBS96_DISPLAY_ORDER = [
+    f"{flank5}[{sub}]{flank3}"
+    for sub in SBS96_SUBSTITUTIONS
+    for flank5 in "ACGT"
+    for flank3 in "ACGT"
+]
+
 
 def _unit(values: list[float], unit: str) -> tuple[list[float], str, str]:
     if unit not in ("counts", "percent", "proportion"):
@@ -63,11 +77,120 @@ def _grouped(labels, values, grouping, colors, sample, context, ytitle, fmt):
             "config": {"responsive": True, "displaylogo": False, "toImageButtonOptions": {"format": "svg"}}}
 
 
-def _sbs96(matrix, sample, values, ytitle, fmt):
-    def group(label):
-        match = re.search(r"\[([CT]>[ACGT])\]", label)
-        return match.group(1) if match else "Other"
-    return _grouped(matrix.labels, values, group, SBS_COLORS, sample, matrix.context, ytitle, fmt)
+def _sbs96_group(label: str) -> str:
+    match = re.search(r"\[([CT]>[ACGT])\]", label)
+    return match.group(1) if match else "Other"
+
+
+def _sbs96_tick_text(label: str, color: str) -> str:
+    # Trinucleotide only (5' flank, mutated base, 3' flank), flanks in gray
+    # and the mutated base bold in its group color -- e.g. "A[C>A]A" -> ACA
+    # with the middle C colored/bold. Plotly tick labels support this
+    # limited inline HTML.
+    flank5, flank3 = label[0], label[-1]
+    ref_base = label[2]
+    return (
+        f"<span style='color:#808080'>{flank5}</span>"
+        f"<span style='color:{color}'><b>{ref_base}</b></span>"
+        f"<span style='color:#808080'>{flank3}</span>"
+    )
+
+
+def _sbs96(matrix: MatrixData, sample: str, unit: str) -> dict:
+    """The classic SigProfilerPlotting SBS96 look: six colored mutation-type
+    header bands in place of a legend, trinucleotide-only x labels colored
+    per group, and a bold sample title -- matching the static plotSBS "96"
+    layout (sigProfilerPlotting.py's make_pickle_file/plotSBS) rather than
+    the generic grouped-bar-with-legend style used for other contexts.
+    """
+    raw_by_label = dict(zip(matrix.labels, matrix.sample_values(sample)))
+    raw = [raw_by_label[label] for label in SBS96_DISPLAY_ORDER]
+    total = sum(raw)
+    if unit == "counts":
+        values = raw
+        ytitle = "Number of Single Base Substitutions"
+    elif unit == "percent":
+        values = [100.0 * v / total if total else 0.0 for v in raw]
+        ytitle = "Percentage of Single Base Substitutions"
+    else:  # proportion
+        values = [v / total if total else 0.0 for v in raw]
+        ytitle = "Proportion of Single Base Substitutions"
+
+    groups = [_sbs96_group(label) for label in SBS96_DISPLAY_ORDER]
+    bar_colors = [SBS_COLORS[group] for group in groups]
+    tick_text = [_sbs96_tick_text(label, color) for label, color in zip(SBS96_DISPLAY_ORDER, bar_colors)]
+
+    top = max(values) * 1.1 if values and max(values) > 0 else 1.0
+    tick_values = [top * i / 4 for i in range(5)]
+    if unit == "counts":
+        tick_labels = ["0"] + [f"{v:,.0f}" for v in tick_values[1:]]
+    elif unit == "percent":
+        tick_labels = ["0"] + [f"{v:.1f}%" for v in tick_values[1:]]
+    else:
+        tick_labels = ["0"] + [f"{v:.3f}" for v in tick_values[1:]]
+
+    n = len(SBS96_DISPLAY_ORDER)
+    per_group = n // len(SBS96_SUBSTITUTIONS)  # 16
+    shapes = []
+    annotations = []
+    for index, substitution in enumerate(SBS96_SUBSTITUTIONS):
+        x0, x1 = index * per_group - 0.5, (index + 1) * per_group - 0.5
+        color = SBS_COLORS[substitution]
+        shapes.append({
+            "type": "rect", "xref": "x", "yref": "paper",
+            "x0": x0, "x1": x1, "y0": 1.03, "y1": 1.1,
+            "fillcolor": color, "line": {"width": 0},
+        })
+        annotations.append({
+            "xref": "x", "yref": "paper", "x": (x0 + x1) / 2, "y": 1.17,
+            "text": f"<b>{substitution}</b>", "showarrow": False,
+            "font": {"family": "Arial, sans-serif", "size": 15, "color": "#000000"},
+        })
+    annotations.append({
+        # Inside the plotting area (below the header bands at paper y>1),
+        # near its top-left -- not at y=1 exactly, which the bands' own
+        # shapes (y0=1.03) would otherwise clip into.
+        "xref": "paper", "yref": "paper", "x": 0.01, "y": 0.96, "yanchor": "top",
+        "xanchor": "left", "text": f"<b>{sample}</b>", "showarrow": False,
+        "font": {"family": "Arial, sans-serif", "size": 18, "color": "#000000"},
+    })
+
+    layout = {
+        "height": 560,
+        "margin": {"l": 70, "r": 25, "t": 100, "b": 70},
+        "paper_bgcolor": "#ffffff", "plot_bgcolor": "#ffffff",
+        "showlegend": False,
+        "shapes": shapes,
+        "annotations": annotations,
+        "xaxis": {
+            "tickmode": "array",
+            "tickvals": list(range(n)),
+            "ticktext": tick_text,
+            "tickfont": {"family": "Courier New, monospace", "size": 11},
+            "showgrid": False,
+            "range": [-0.5, n - 0.5],
+        },
+        "yaxis": {
+            "title": {"text": ytitle, "font": {"family": "Times New Roman, serif", "size": 15}},
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            "range": [0, top],
+            "gridcolor": "#ededed",
+            "zeroline": False,
+        },
+    }
+    traces = [{
+        "type": "bar", "x": list(range(n)), "y": values,
+        "marker": {"color": bar_colors},
+        "customdata": SBS96_DISPLAY_ORDER,
+        "hovertemplate": f"%{{customdata}}<br>{sample}: %{{y}}<extra></extra>",
+        "showlegend": False,
+    }]
+    return {
+        "traces": traces, "layout": layout,
+        "config": {"responsive": True, "displaylogo": False, "toImageButtonOptions": {"format": "svg"}},
+    }
 
 
 def _sbs288(matrix, sample, values, ytitle, fmt):
@@ -157,12 +280,19 @@ def _sbs4608(matrix: MatrixData, sample: str, unit: str) -> dict:
 
 def render_sample(matrix: MatrixData, sample: str, unit: str = "counts") -> dict:
     """Render one sample/signature as JSON accepted by Plotly.newPlot."""
-    raw = matrix.sample_values(sample)
-    values, ytitle, fmt = _unit(raw, unit)
+    if unit not in ("counts", "percent", "proportion"):
+        raise MatrixError("unit must be 'counts', 'percent', or 'proportion'")
     if matrix.context == "SBS4608":
         return _sbs4608(matrix, sample, unit)
+    if matrix.context == "SBS96":
+        # Bypasses the generic _unit()/_grouped() path entirely: SBS96 gets
+        # its own classic SigProfilerPlotting layout (header bands, colored
+        # trinucleotide ticks) rather than the shared legend-based style.
+        return {"kind": "standard", "figure": _sbs96(matrix, sample, unit)}
+    raw = matrix.sample_values(sample)
+    values, ytitle, fmt = _unit(raw, unit)
     renderer = {
-        "SBS96": _sbs96, "SBS288": _sbs288, "DBS78": _dbs78,
+        "SBS288": _sbs288, "DBS78": _dbs78,
         "ID83": _id83, "CNV48": _cnv48, "SV32": _sv32,
     }.get(matrix.context, _generic)
     return {"kind": "standard", "figure": renderer(matrix, sample, values, ytitle, fmt)}

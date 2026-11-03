@@ -158,6 +158,7 @@ def test_contexts_without_a_dedicated_renderer_still_draw(tmp_path, context):
     with _dashboard() as page:
         _upload(page, path, context, 2)
         assert page.is_hidden("#variantPanel")
+        assert page.is_visible("#unitPanel")
         assert _plot(page).evaluate("gd => gd.data.length") > 0
 
 
@@ -261,19 +262,23 @@ def test_the_export_button_downloads_an_image(tmp_path):
         assert saved.read_text(encoding="utf-8").lstrip().startswith("<svg")
 
 
-def test_percentage_redraws_each_sample_as_shares_of_its_total(tmp_path):
-    path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["S1", "S2"])
+@pytest.mark.parametrize("context", ["SBS96", "DBS78"])
+@pytest.mark.parametrize("unit, whole", [("percent", 100.0), ("proportion", 1.0)])
+def test_a_unit_redraws_each_sample_as_shares_of_its_total(tmp_path, context, unit, whole):
+    # Waits on the values themselves, not the axis title: each renderer is
+    # free to word its own title.
+    path = _write_matrix(tmp_path / f"{context}.txt", context, ["S1", "S2"])
     with _dashboard() as page:
-        _upload(page, path, "SBS96", 2)
+        _upload(page, path, context, 2)
         total = "gd => gd.data.reduce((s, t) => s + t.y.reduce((a, b) => a + b, 0), 0)"
         assert _plot(page).evaluate(total) > 100
-        page.check('input[name="unit"][value="percent"]', force=True)
+        page.check(f'input[name="unit"][value="{unit}"]', force=True)
         page.wait_for_function(
-            "() => [...document.querySelectorAll('.card .js-plotly-plot')].every(gd =>"
-            " gd.layout.yaxis.title.text === 'Percent of sample' ||"
-            " gd.layout.yaxis.title === 'Percent of sample')")
+            "whole => [...document.querySelectorAll('.card .js-plotly-plot')]"
+            f".every(gd => Math.abs(({total})(gd) - whole) < 1e-6 * whole)",
+            arg=whole)
         for index in range(2):
-            assert _plot(page, index).evaluate(total) == pytest.approx(100.0)
+            assert _plot(page, index).evaluate(total) == pytest.approx(whole)
 
 
 def test_sbs4608_switches_the_whole_figure(tmp_path):
@@ -284,6 +289,8 @@ def test_sbs4608_switches_the_whole_figure(tmp_path):
         _upload(page, path, "SBS4608", PAGE_4608)
         assert len(requests) == PAGE_4608
         assert page.is_visible("#variantPanel")
+        # Always drawn as a percentage, so no unit choice is offered.
+        assert page.is_hidden("#unitPanel")
 
         served = page.evaluate(
             "() => fetch('/api/render?sample=S0&unit=counts').then(r => r.json())")
@@ -305,6 +312,11 @@ def test_sbs4608_switches_the_whole_figure(tmp_path):
                 " === JSON.stringify(want); }",
                 arg=[name for _, name in expected(variant)["traces"]])
             assert plot.evaluate(shape) == expected(variant)
+
+        other = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["A"])
+        _upload(page, other, "SBS96", 1)
+        assert page.is_visible("#unitPanel")
+        assert page.is_hidden("#variantPanel")
 
 
 # --------------------------------------------------------------- safety
