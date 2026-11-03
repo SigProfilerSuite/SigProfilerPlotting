@@ -111,17 +111,51 @@ def _pidfile() -> Path:
     return _state_dir() / "dashboard.pid"
 
 
+def _read_pidfile(pidfile: Path) -> tuple[int, int] | None:
+    """Return (pid, port) from the pidfile, or None if it's absent/unparseable."""
+    if not pidfile.is_file():
+        return None
+    try:
+        pid_text, port_text = pidfile.read_text(encoding="utf-8").strip().split(":", 1)
+        return int(pid_text), int(port_text)
+    except (OSError, ValueError):
+        return None
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not ours to signal with 0 -- still alive
+    return True
+
+
+def _running_dashboard_url(pidfile: Path) -> str | None:
+    """URL of an already-running dashboard, or None if none is live.
+
+    As a side effect, removes the pidfile if it names a process that is no
+    longer running (so the caller can safely claim it next).
+    """
+    existing = _read_pidfile(pidfile)
+    if existing is None:
+        return None
+    pid, port = existing
+    if _is_process_alive(pid):
+        return f"http://127.0.0.1:{port}/"
+    pidfile.unlink(missing_ok=True)
+    return None
+
+
 def stop_server() -> None:
     pidfile = _pidfile()
-    if not pidfile.is_file():
-        print("No running dashboard server found.", flush=True)
-        return
-    try:
-        pid = int(pidfile.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    existing = _read_pidfile(pidfile)
+    if existing is None:
         pidfile.unlink(missing_ok=True)
         print("No running dashboard server found.", flush=True)
         return
+    pid, _port = existing
     try:
         os.kill(pid, signal.SIGTERM)
         print(f"Stopped dashboard server (pid {pid}).", flush=True)
@@ -137,12 +171,21 @@ def stop_server() -> None:
 
 
 def _run_server(no_launch: bool) -> None:
+    pidfile = _pidfile()
+    existing_url = _running_dashboard_url(pidfile)
+    if existing_url is not None:
+        # Judgment call: refuse rather than stop-and-restart, even under
+        # --reinstall -- a double-click/double-run should never silently
+        # kill a dashboard the user (or another tab) may be using.
+        print(f"SigProfilerPlotting dashboard is already running at {existing_url}", flush=True)
+        print("Run with --stop first if you want to restart it.", flush=True)
+        return
+
     from .server import make_server  # deferred: requires the package to be importable
 
     server = make_server("127.0.0.1", 0)
     port = server.server_address[1]
-    pidfile = _pidfile()
-    pidfile.write_text(str(os.getpid()), encoding="utf-8")
+    pidfile.write_text(f"{os.getpid()}:{port}", encoding="utf-8")
 
     def _handle_term(signum, frame):
         raise SystemExit(0)
