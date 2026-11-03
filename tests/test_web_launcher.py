@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 
@@ -110,7 +111,7 @@ def test_stop_with_a_stale_pidfile_cleans_up_without_error(tmp_path, monkeypatch
     monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
     pidfile = tmp_path / "dashboard.pid"
     # A pid astronomically unlikely to be a real running process.
-    pidfile.write_text("999999999", encoding="utf-8")
+    pidfile.write_text("999999999:51000", encoding="utf-8")
     launcher.stop_server()
     assert not pidfile.exists()
     assert "No running dashboard server found." in capsys.readouterr().out
@@ -131,7 +132,7 @@ def test_stop_terminates_a_real_process_and_removes_pidfile(tmp_path, monkeypatc
     monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
     process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
     pidfile = tmp_path / "dashboard.pid"
-    pidfile.write_text(str(process.pid), encoding="utf-8")
+    pidfile.write_text(f"{process.pid}:51000", encoding="utf-8")
     try:
         launcher.stop_server()
         assert not pidfile.exists()
@@ -151,3 +152,62 @@ def test_managed_main_stop_short_circuits_before_ensure_dependencies(monkeypatch
     )
     assert launcher.managed_main(["--stop"]) == 0
     assert calls == ["stop"]
+
+
+# -- Regression: launching twice without --stop in between must not orphan
+# the first server (found by the user running `./launch_dashboard.sh
+# --no-launch` twice in a row and reproducing it directly: the pidfile was
+# silently overwritten by the second launch, leaving the first server
+# unreachable via --stop). --------------------------------------------------
+
+
+def test_is_process_alive_true_for_the_current_process():
+    assert launcher._is_process_alive(os.getpid()) is True
+
+
+def test_is_process_alive_false_for_an_unused_pid():
+    assert launcher._is_process_alive(999999999) is False
+
+
+def test_running_dashboard_url_is_none_without_a_pidfile(tmp_path):
+    assert launcher._running_dashboard_url(tmp_path / "dashboard.pid") is None
+
+
+def test_running_dashboard_url_reports_a_live_process(tmp_path, monkeypatch):
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("4242:51000", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_is_process_alive", lambda pid: pid == 4242)
+    assert launcher._running_dashboard_url(pidfile) == "http://127.0.0.1:51000/"
+    assert pidfile.exists()  # a live process's pidfile is left alone
+
+
+def test_running_dashboard_url_cleans_up_a_dead_pid(tmp_path, monkeypatch):
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("4242:51000", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_is_process_alive", lambda pid: False)
+    assert launcher._running_dashboard_url(pidfile) is None
+    assert not pidfile.exists()
+
+
+def test_run_server_refuses_a_second_instance_without_touching_the_pidfile(
+    tmp_path, monkeypatch, capsys
+):
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("4242:51000", encoding="utf-8")  # a "live" first instance
+    monkeypatch.setattr(launcher, "_pidfile", lambda: pidfile)
+    monkeypatch.setattr(launcher, "_running_dashboard_url", lambda p: "http://127.0.0.1:51000/")
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("make_server must not run a second instance")
+
+    import sigProfilerPlotting.web.server as server_module
+
+    monkeypatch.setattr(server_module, "make_server", fail_if_called)
+
+    launcher._run_server(no_launch=True)
+
+    out = capsys.readouterr().out
+    assert "already running at http://127.0.0.1:51000/" in out
+    # The original instance's record must survive untouched -- this is
+    # exactly what the reported bug overwrote.
+    assert pidfile.read_text(encoding="utf-8") == "4242:51000"
