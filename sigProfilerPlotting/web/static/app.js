@@ -114,6 +114,8 @@ function loadMatrix(info) {
     `${state.context} · ${info.labels_count} mutation contexts · ` +
     `${n} ${n === 1 ? 'sample' : 'samples'}`;
   $('variantPanel').classList.toggle('hidden', state.context !== 'SBS4608');
+  // SBS4608 is always drawn as a percentage, so a unit choice would do nothing.
+  $('unitPanel').classList.toggle('hidden', state.context === 'SBS4608');
   $('sampleSearch').value = '';
   for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = false;
   renderList();

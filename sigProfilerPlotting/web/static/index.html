@@ -28,9 +28,10 @@
 
     <section class="panel" id="unitPanel">
       <h2>Values</h2>
-      <div class="segmented" role="radiogroup" aria-label="Values">
+      <div class="segmented three" role="radiogroup" aria-label="Values">
         <label><input type="radio" name="unit" value="counts" checked><span>Counts</span></label>
         <label><input type="radio" name="unit" value="percent"><span>Percentage</span></label>
+        <label><input type="radio" name="unit" value="proportion"><span>Proportion</span></label>
       </div>
     </section>
 
@@ -41,6 +42,7 @@
         <label><input type="radio" name="variant" value="strand_bias"><span>Strand bias</span></label>
         <label><input type="radio" name="variant" value="genic_bias"><span>Genic bias</span></label>
       </div>
+      <p class="hint">SBS4608 plots always show each sample as a percentage of its substitutions.</p>
     </section>
 
     <section class="panel grow" id="samplePanel">
