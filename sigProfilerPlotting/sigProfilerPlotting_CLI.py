@@ -12,6 +12,7 @@ def main_function():
         "plotDBS": "Plot Doublet Base Substitutions.",
         "plotSV": "Plot Structural Variations.",
         "plotCNV": "Plot Copy Number Variations.",
+        "dashboard": "Launch the local interactive dashboard.",
     }
 
     if len(sys.argv) < 2 or sys.argv[1] not in commands.keys():
@@ -22,7 +23,7 @@ def main_function():
     args = sys.argv[1:]
 
     controller = cli_controller.CliController()
-    valid_commands = {"plotSBS", "plotID", "plotDBS", "plotSV", "plotCNV"}
+    valid_commands = {"plotSBS", "plotID", "plotDBS", "plotSV", "plotCNV", "dashboard"}
 
     if command in valid_commands:
         controller.dispatch(args)

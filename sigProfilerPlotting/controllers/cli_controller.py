@@ -226,6 +226,37 @@ def dispatch_plot_sv(parsed_args: argparse.Namespace) -> None:
     )
 
 
+def parse_arguments_dashboard(args: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="SigProfilerPlotting dashboard",
+        description="Launch the local interactive dashboard.",
+    )
+    parser.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="Start the server without opening a browser tab.",
+    )
+    parser.add_argument(
+        "--stop", action="store_true", help="Stop a running dashboard server and exit."
+    )
+    return parser.parse_args(args)
+
+
+def dispatch_dashboard(parsed_args: argparse.Namespace) -> None:
+    # Runs the thin, already-installed-environment entry point (no venv
+    # management) -- `--reinstall` is specific to the double-click launcher
+    # scripts, which manage their own private virtualenv, so it isn't
+    # exposed here.
+    from sigProfilerPlotting.web.launcher import main as dashboard_main
+
+    argv = []
+    if parsed_args.no_launch:
+        argv.append("--no-launch")
+    if parsed_args.stop:
+        argv.append("--stop")
+    dashboard_main(argv)
+
+
 def dispatch_plot_cnv(parsed_args: argparse.Namespace) -> None:
     sigPlt.plotCNV(
         matrix_path=parsed_args.matrix_path,
@@ -256,9 +287,13 @@ class CliController:
         elif "plotCNV" in user_args:
             parsed_args = parse_arguments_cnv(user_args[1:])
             dispatch_plot_cnv(parsed_args)
+        elif "dashboard" in user_args:
+            parsed_args = parse_arguments_dashboard(user_args[1:])
+            dispatch_dashboard(parsed_args)
         else:
             print(
-                "Unknown command. Available commands: plotSBS, plotID, plotDBS, plotSV, plotCNV."
+                "Unknown command. Available commands: plotSBS, plotID, plotDBS, plotSV, "
+                "plotCNV, dashboard."
             )
 
 

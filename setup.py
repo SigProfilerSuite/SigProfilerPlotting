@@ -26,6 +26,7 @@ setup(
         "sigProfilerPlotting.fonts",
         "sigProfilerPlotting.controllers",
         "sigProfilerPlotting.sbs4608",
+        "sigProfilerPlotting.web",
     ],
     python_requires=">=3.9",
     install_requires=[
@@ -42,14 +43,19 @@ setup(
             "pytest",
             "scikit-image>=0.21.0",
             "numpy>=2.0.0",
+            # Optional: only tests/test_web_interactions.py needs this, and
+            # it skips cleanly (pytest.importorskip) when it's absent. Also
+            # run `playwright install chromium` once after installing it.
+            "playwright",
         ],
     },
     entry_points={
         "console_scripts": [
             "SigProfilerPlotting=sigProfilerPlotting.sigProfilerPlotting_CLI:main_function",
+            "sigprofilerplotting-web=sigProfilerPlotting.web.launcher:main",
         ],
     },
-    package_data={"": ["fonts/*.ttf"]},
+    package_data={"": ["fonts/*.ttf", "web/static/*"]},
     include_package_data=True,
     zip_safe=False,
 )
