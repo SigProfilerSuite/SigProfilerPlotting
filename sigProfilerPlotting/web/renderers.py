@@ -15,13 +15,18 @@ PALETTE = ["#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B", "#EECA3B", "#B
 
 
 def _unit(values: list[float], unit: str) -> tuple[list[float], str, str]:
-    if unit not in ("counts", "percent"):
-        raise MatrixError("unit must be 'counts' or 'percent'")
+    if unit not in ("counts", "percent", "proportion"):
+        raise MatrixError("unit must be 'counts', 'percent', or 'proportion'")
     if unit == "counts":
         return values, "Mutations", ".4~g"
     total = sum(values)
-    return ([100.0 * value / total if total else 0.0 for value in values],
-            "Percent of sample", ".3f")
+    if unit == "percent":
+        return ([100.0 * value / total if total else 0.0 for value in values],
+                "Percent of sample", ".3f")
+    # "proportion": the same fraction-of-total as percent, kept on a 0-1
+    # scale (no *100) rather than converted to a 0-100 percentage.
+    return ([value / total if total else 0.0 for value in values],
+            "Proportion of sample", ".4f")
 
 
 def _layout(sample: str, context: str, ytitle: str, height: int = 520) -> dict:
@@ -130,11 +135,13 @@ def _sbs4608(matrix: MatrixData, sample: str, unit: str) -> dict:
     from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
     from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
 
+    # `unit` is intentionally unused here: SBS4608Data/SBS4608PlotBuilder
+    # already renormalize every contribution to a percentage of its own
+    # total internally (matching plotInteractive, which has no raw-counts
+    # mode at all), so pre-dividing by total here would be a no-op -- the
+    # dashboard UI hides the counts/percentage/proportion control for this
+    # context rather than offering a choice that can't change the output.
     raw = matrix.raw4608(sample)
-    if unit == "percent":
-        total = sum(float(row["contribution"]) for row in raw)
-        if total:
-            raw = [{**row, "contribution": float(row["contribution"]) / total} for row in raw]
     variants = {}
     for main_type in ("default", "strand_bias", "genic_bias"):
         config = SBS4608PlotConfig(include_detailed_heatmaps=True, main_plot_type=main_type)
