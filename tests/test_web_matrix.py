@@ -148,3 +148,14 @@ def test_wrong_first_header_is_rejected(tmp_path):
     path.write_text("NotAHeader\tS1\nC>A\t1\n", encoding="utf-8")
     with pytest.raises(MatrixError, match="must identify mutation contexts"):
         load_matrix(path)
+
+
+def test_index_header_is_accepted(tmp_path):
+    # pandas' default DataFrame.to_csv() output names an unlabeled index
+    # column "index" -- the package's own sigProfilerPlotting.py already
+    # treats this as a valid mutation-context header (INDEX_VALS), and the
+    # dashboard parser must match that, not reject real-world exports.
+    path = _write(tmp_path / "index_header.tsv", SBS6_LABELS, columns=("S1",))
+    path.write_text(path.read_text(encoding="utf-8").replace("MutationType", "index", 1))
+    matrix = load_matrix(path)
+    assert matrix.context == "SBS6"
