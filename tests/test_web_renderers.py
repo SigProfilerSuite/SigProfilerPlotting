@@ -53,6 +53,27 @@ def test_render_sample_percent_mode_handles_all_zero_total(tmp_path):
     assert all(y == 0.0 for y in ys)
 
 
+def test_render_sample_proportion_mode_sums_to_one(tmp_path):
+    path = _write(tmp_path / "sbs6.tsv", SBS6_LABELS, values={"C>A": [4.0], **{l: [1.0] for l in SBS6_LABELS[1:]}})
+    matrix = load_matrix(path)
+    figure = render_sample(matrix, "S1", unit="proportion")
+    ys = [y for trace in figure["figure"]["traces"] for y in trace["y"]]
+    assert sum(ys) == pytest.approx(1.0)
+    # Same distribution as percent mode, just on a 0-1 scale instead of 0-100.
+    percent_ys = [
+        y for trace in render_sample(matrix, "S1", unit="percent")["figure"]["traces"] for y in trace["y"]
+    ]
+    assert ys == pytest.approx([p / 100.0 for p in percent_ys])
+
+
+def test_render_sample_proportion_mode_handles_all_zero_total(tmp_path):
+    path = _write(tmp_path / "zero.tsv", SBS6_LABELS, values={l: [0.0] for l in SBS6_LABELS})
+    matrix = load_matrix(path)
+    figure = render_sample(matrix, "S1", unit="proportion")
+    ys = [y for trace in figure["figure"]["traces"] for y in trace["y"]]
+    assert all(y == 0.0 for y in ys)
+
+
 def test_unknown_sample_raises_actionable_error(tmp_path):
     from sigProfilerPlotting.web.matrix import MatrixError
 
