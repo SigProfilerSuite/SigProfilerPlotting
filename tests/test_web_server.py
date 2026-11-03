@@ -130,6 +130,45 @@ def test_render_without_a_prior_upload_is_rejected(running_server):
     conn.close()
 
 
+def test_unexpected_render_error_returns_500_without_dropping_the_connection(running_server, monkeypatch):
+    # A bug anywhere in render_sample (anything that isn't MatrixError) must
+    # not silently kill the connection -- that's indistinguishable from a
+    # server crash to the browser ("Failed to fetch", no diagnostic info).
+    import sigProfilerPlotting.web.server as server_module
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(server_module, "render_sample", _boom)
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _multipart_body("matrix.tsv", _sbs6_tsv())
+    conn = _connection(running_server)
+    conn.request(
+        "POST", "/api/matrix", body=body,
+        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+    )
+    resp = conn.getresponse()
+    resp.read()
+    conn.close()
+
+    conn = _connection(running_server)
+    conn.request("GET", "/api/render?sample=S1")
+    resp = conn.getresponse()
+    assert resp.status == 500
+    payload = json.loads(resp.read())
+    assert "boom" in payload["error"]
+    conn.close()
+
+    # The server itself must still be alive and answering other requests.
+    conn = _connection(running_server)
+    conn.request("GET", "/")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    resp.read()
+    conn.close()
+
+
 def test_malformed_matrix_upload_returns_actionable_error(running_server):
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
