@@ -41,3 +41,6 @@ sigProfilerPlotting/_version.py
 # test output
 tests/input/*/output/*
 sigProfilerPlotting/examples/output/
+
+# Private virtualenv created by the dashboard launcher scripts
+.venv-dashboard/
