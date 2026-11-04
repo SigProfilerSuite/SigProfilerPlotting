@@ -16,11 +16,12 @@ instead; with neither, these tests are skipped.
 import random
 import threading
 from contextlib import contextmanager
-from importlib.resources import files
 
 import pytest
 
 sync_api = pytest.importorskip("playwright.sync_api")
+
+from sigProfilerPlotting.web.matrix import REFERENCE_CONTEXTS
 
 PAGE = 15          # plots drawn before the reader asks for more
 PAGE_4608 = 4
@@ -46,8 +47,7 @@ XSS_NAMES = [
 
 
 def _labels(context):
-    text = (files("sigProfilerPlotting.reference_formats") / f"{context}.txt").read_text()
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    return list(REFERENCE_CONTEXTS[context])
 
 
 def _write_matrix(path, context, names, low=5, high=60, cell=None):

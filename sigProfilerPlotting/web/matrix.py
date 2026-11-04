@@ -5,8 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import math
+import os
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
 from typing import Iterable
 
@@ -52,9 +52,16 @@ class MatrixData:
 
 
 def _references() -> dict[str, tuple[str, ...]]:
-    root = files("sigProfilerPlotting.reference_formats")
+    # sigProfilerPlotting/reference_formats has no __init__.py, so it's an
+    # implicit namespace package -- importlib.resources.files() on Python
+    # 3.9 resolves that to a spec with origin=None, which pathlib.Path()
+    # then rejects outright ("expected str, bytes or os.PathLike object,
+    # not NoneType"). Use the same plain os.path-relative-to-__file__
+    # approach sigProfilerPlotting.py itself already uses for this exact
+    # directory (SPP_REFERENCE), which has no such namespace-package pitfall.
+    root = Path(os.path.dirname(os.path.abspath(__file__))).parent / "reference_formats"
     result = {}
-    for item in root.iterdir():
+    for item in sorted(root.iterdir()):
         if item.name.endswith(".txt"):
             rows = tuple(
                 line.strip()
