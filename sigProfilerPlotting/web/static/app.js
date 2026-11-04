@@ -11,6 +11,7 @@
 const PAGE = 15;
 const PAGE_4608 = 4;      // each SBS4608 sample is three full figures, ~0.7 MB
 const MAX_PARALLEL = 3;   // render requests in flight at once
+const SELECT_ALL_THRESHOLD = 100; // above this many samples/signatures, default to just the first
 
 const $ = (id) => document.getElementById(id);
 
@@ -108,7 +109,12 @@ function loadMatrix(info) {
   for (const name of [...state.cards.keys()]) dropCard(name);
   state.context = String(info.context);
   state.samples = info.samples.map(String);
-  state.selected = new Set(state.samples);
+  // Past a threshold a "select everything" default makes the sidebar and
+  // the plot area equally unusable before the reader has looked at
+  // anything -- start with just the first one, selectable up from there.
+  state.selected = state.samples.length > SELECT_ALL_THRESHOLD
+    ? new Set(state.samples.slice(0, 1))
+    : new Set(state.samples);
   state.limit = pageSize();
 
   const n = state.samples.length;
@@ -116,8 +122,6 @@ function loadMatrix(info) {
     `${state.context} · ${info.labels_count} mutation contexts · ` +
     `${n} ${n === 1 ? 'sample' : 'samples'}`;
   $('variantPanel').classList.toggle('hidden', state.context !== 'SBS4608');
-  // SBS4608 is always drawn as a percentage, so a unit choice would do nothing.
-  $('unitPanel').classList.toggle('hidden', state.context === 'SBS4608');
   $('sampleSearch').value = '';
   for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = false;
   renderList();
