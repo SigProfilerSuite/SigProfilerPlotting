@@ -10,14 +10,19 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to Ubuntu 26.04, which has no prebuilt Python 3.9
+    # for actions/setup-python ("The version '3.9' ... was not found").
+    # Pin that leg to the last Ubuntu release that still ships one, rather
+    # than dropping 3.9 from the matrix -- setup.py declares
+    # python_requires=">=3.9", so CI should keep covering it.
+    runs-on: ${{ matrix.python-version == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
     strategy:
       matrix:
         python-version: ['3.9', '3.12']
-    
+
     steps:
     - uses: actions/checkout@v6
       with:
