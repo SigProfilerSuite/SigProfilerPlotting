@@ -15,8 +15,12 @@ from ..sigProfilerPlotting import INDEX_VALS
 # Reuse the package's own canonical header names (sigProfilerPlotting.py's
 # INDEX_VALS, e.g. the "index" name pandas writes by default) rather than
 # maintaining a second, drift-prone list here -- plus "context", which the
-# dashboard accepts as an extra, more descriptive alias.
-MUTATION_TYPE_HEADER_ALIASES = {name.lower() for name in INDEX_VALS} | {"context"}
+# dashboard accepts as an extra, more descriptive alias. "" is also accepted:
+# `DataFrame.to_csv(sep="\t")` (no index name set) writes a blank first
+# header cell, which is a very common way this exact kind of matrix gets
+# produced -- rejecting it just because the corner cell is blank, when every
+# data row still has a real mutation-context label, is needless friction.
+MUTATION_TYPE_HEADER_ALIASES = {name.lower() for name in INDEX_VALS} | {"context", ""}
 
 
 class MatrixError(ValueError):
@@ -183,7 +187,7 @@ def load_matrix(source) -> MatrixData:
     if header[0].lower() not in MUTATION_TYPE_HEADER_ALIASES:
         raise MatrixError(
             "The first column must identify mutation contexts (MutationType, Mutation Types, "
-            "classification, index, or context)."
+            "classification, index, context, or left blank)."
         )
     columns = header[1:]
     if any(not column for column in columns):

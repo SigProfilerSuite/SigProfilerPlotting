@@ -159,3 +159,15 @@ def test_index_header_is_accepted(tmp_path):
     path.write_text(path.read_text(encoding="utf-8").replace("MutationType", "index", 1))
     matrix = load_matrix(path)
     assert matrix.context == "SBS6"
+
+
+def test_blank_first_header_cell_is_accepted(tmp_path):
+    # DataFrame.to_csv(sep="\t") with no index name set (a very common real
+    # -world export, e.g. pd.DataFrame(..., index=mutation_types).to_csv())
+    # writes a *blank* first header cell, not "index" or "MutationType" --
+    # every data row still carries a real mutation-context label in its
+    # first column, so this should not be rejected either.
+    path = _write(tmp_path / "blank_header.tsv", SBS6_LABELS, columns=("S1",))
+    path.write_text(path.read_text(encoding="utf-8").replace("MutationType", "", 1))
+    matrix = load_matrix(path)
+    assert matrix.context == "SBS6"
