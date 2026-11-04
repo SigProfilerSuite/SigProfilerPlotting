@@ -196,6 +196,27 @@ def test_only_the_first_page_of_plots_is_fetched(tmp_path):
         assert titles == names[:2 * PAGE]
 
 
+def test_two_near_simultaneous_load_more_triggers_only_advance_one_page(tmp_path):
+    # #sentinel sits immediately after the "Load more" button in the DOM, so
+    # scrolling the button into view -- a real click, or Playwright's own
+    # actionability check -- can itself bring the sentinel into the
+    # IntersectionObserver's rootMargin and fire loadMore() a second time via
+    # the auto-scroll path, on top of the button's own click handler. Call
+    # loadMore() twice back-to-back (simulating that race directly, rather
+    # than depending on exact viewport/font metrics to reproduce it) and
+    # confirm only one page's worth of new cards actually appears.
+    names = [f"PD{i:04d}a" for i in range(40)]
+    path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", names)
+    with _dashboard() as page:
+        requests = _render_requests(page)
+        _upload(page, path, "SBS96", PAGE)
+        page.evaluate("loadMore(); loadMore();")
+        _wait_ready(page, 2 * PAGE)
+        page.wait_for_timeout(200)
+        assert page.locator(".card").count() == 2 * PAGE
+        assert len(requests) == 2 * PAGE
+
+
 def test_scrolling_to_the_end_fetches_the_next_page(tmp_path):
     path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", [f"S{i}" for i in range(20)])
     with _dashboard() as page:
