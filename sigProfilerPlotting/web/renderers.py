@@ -274,6 +274,7 @@ def _sbs4608(matrix: MatrixData, sample: str, unit: str) -> dict:
         built["sections"]["detailed_heatmaps"]["paper_band"] = [total_top, config.main_plot_domain[0]]
         built["sections"]["transcription_bias"]["paper_band"] = [0, 0.19]
         built["config"].update({"responsive": True, "displayModeBar": True, "displaylogo": False})
+        built["main_plot_type"] = main_type  # read by the ported compactPlot() in app.js
         variants[main_type] = built
     return {"kind": "sbs4608", "variants": variants}
 

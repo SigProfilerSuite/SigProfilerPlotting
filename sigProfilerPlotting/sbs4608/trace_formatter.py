@@ -55,11 +55,13 @@ class TraceFormatter:
                 config = colorbar_configs.get(trace["yaxis"])
                 if config:
                     if not shown_colorbars.get(trace["yaxis"]):
-                        # The z values these colorbars describe are fractions
-                        # (e.g. 0.093), not already-scaled 0-100 percentages --
-                        # ".0f" plus a literal "%" suffix rounded every such
-                        # value down to "0%". ".1%" multiplies by 100 and
-                        # appends "%" itself, matching the actual scale.
+                        # apply_percentage_formatting() (called just before
+                        # this, sbs4608_plot_builder.py:53-54) already
+                        # multiplies every z value by 100 -- e.g. a fraction
+                        # of 0.093 becomes 9.3, meaning "9.3%". Plotly's own
+                        # ".1%" tickformat would multiply by 100 *again*
+                        # (turning 9.3 into "930%"), so use a plain numeric
+                        # format plus a literal "%" suffix instead.
                         trace["colorbar"] = {
                             "len": config["len"],
                             "y": config["y"],
@@ -67,7 +69,8 @@ class TraceFormatter:
                             "xanchor": "left",
                             "xpad": 5,
                             "thickness": 20,
-                            "tickformat": ".1%",
+                            "tickformat": ".1f",
+                            "ticksuffix": "%",
                         }
                         trace["showscale"] = True
                         shown_colorbars[trace["yaxis"]] = True
