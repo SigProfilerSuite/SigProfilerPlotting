@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import threading
 import traceback
 from email import policy
 from email.parser import BytesParser
@@ -228,6 +229,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _dispatch_post(self) -> None:
         parsed = urlsplit(self.path)
+        if parsed.path == "/api/shutdown":
+            if not _allowed_origin(self.headers.get("Origin"), self._port()):
+                self._reject(HTTPStatus.FORBIDDEN, "Unrecognized Origin header.")
+                return
+            self._serve_shutdown()
+            return
         if parsed.path != "/api/matrix":
             self._reject(HTTPStatus.NOT_FOUND, "Not found.")
             return
@@ -252,6 +259,17 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "labels_count": len(matrix.labels),
             },
         )
+
+    def _serve_shutdown(self) -> None:
+        # ThreadingHTTPServer runs each request on its own worker thread, so
+        # it's safe to signal shutdown from here -- but server.shutdown()
+        # blocks the calling thread until the serve_forever() loop (running
+        # on a *different* thread, typically the launcher's main thread)
+        # notices and exits. Do that handoff on a background thread so this
+        # handler can send its response and return immediately rather than
+        # stalling the client for the shutdown poll interval.
+        self._write_json(HTTPStatus.OK, {"status": "stopping"})
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
 
     def _handle_unexpected_error(self, exc: Exception) -> None:
         # A bug anywhere in parsing/rendering must not silently drop the

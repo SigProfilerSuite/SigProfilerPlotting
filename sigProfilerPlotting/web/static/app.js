@@ -431,6 +431,27 @@ function onToggle(section, on) {
   redrawSbs4608();
 }
 
+async function quit() {
+  if (!window.confirm('Stop the SigProfilerPlotting dashboard server? This closes the session for every open tab.')) {
+    return;
+  }
+  const button = $('quitButton');
+  button.disabled = true;
+  button.textContent = 'Stopping...';
+  try {
+    await fetch('/api/shutdown', { method: 'POST' });
+  } catch (e) {
+    // The server closes its socket as part of shutting down, so the fetch
+    // itself failing (rather than resolving) is the expected success case.
+  }
+  document.body.innerHTML = '';
+  document.title = 'SigProfilerPlotting dashboard (stopped)';
+  const message = document.createElement('p');
+  message.className = 'stopped-message';
+  message.textContent = 'The dashboard server has stopped. You can close this tab.';
+  document.body.appendChild(message);
+}
+
 function init() {
   if (!window.Plotly) {
     showError('The plotting library did not load. Reload the page; if this persists, restart the dashboard.');
@@ -458,6 +479,7 @@ function init() {
     r.addEventListener('change', () => r.checked && onVariant(r.value)));
   document.querySelectorAll('input[name="section"]').forEach((c) =>
     c.addEventListener('change', () => onToggle(c.value, c.checked)));
+  $('quitButton').addEventListener('click', quit);
 
   new IntersectionObserver((entries) => {
     state.sentinelVisible = entries.some((e) => e.isIntersecting);
