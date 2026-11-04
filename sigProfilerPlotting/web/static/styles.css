@@ -56,6 +56,17 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
   font-variant-numeric: tabular-nums;
 }
 
+.quit-button {
+  margin-left: auto;
+  color: var(--error); border-color: var(--error);
+}
+.quit-button:hover:not(:disabled) { color: var(--accent-ink); background: var(--error); }
+
+.stopped-message {
+  margin: 40px auto; max-width: 420px; text-align: center;
+  color: var(--muted); font: 15px/1.5 var(--sans);
+}
+
 .shell {
   flex: 1 1 auto; min-height: 0;
   display: grid;

@@ -206,3 +206,51 @@ def test_html_response_carries_a_content_security_policy(running_server):
 def test_make_server_rejects_non_loopback_host():
     with pytest.raises(ValueError):
         make_server("0.0.0.0", 0)
+
+
+def test_shutdown_requires_matching_origin(running_server):
+    conn = _connection(running_server)
+    conn.request(
+        "POST", "/api/shutdown", body=b"",
+        headers={"Content-Length": "0", "Origin": "http://evil.example.com"},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 403
+    resp.read()
+    conn.close()
+
+    # Rejected shutdown must not actually stop the server.
+    conn = _connection(running_server)
+    conn.request("GET", "/")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    resp.read()
+    conn.close()
+
+
+def test_quit_button_shuts_down_the_running_server():
+    # Exercises the real lifecycle the "Quit" button drives: a same-origin
+    # POST to /api/shutdown must make serve_forever() actually return, the
+    # way the launcher's own SIGTERM handler does, rather than merely
+    # returning a 200 while the server keeps running.
+    server = make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        origin = f"http://127.0.0.1:{port}"
+        conn = _connection(server)
+        conn.request(
+            "POST", "/api/shutdown", body=b"",
+            headers={"Content-Length": "0", "Origin": origin},
+        )
+        resp = conn.getresponse()
+        assert resp.status == 200
+        payload = json.loads(resp.read())
+        assert payload["status"] == "stopping"
+        conn.close()
+
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "serve_forever() should have returned after /api/shutdown"
+    finally:
+        server.server_close()
