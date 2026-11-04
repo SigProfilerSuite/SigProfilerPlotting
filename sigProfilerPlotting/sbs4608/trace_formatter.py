@@ -62,6 +62,18 @@ class TraceFormatter:
                         # ".1%" tickformat would multiply by 100 *again*
                         # (turning 9.3 into "930%"), so use a plain numeric
                         # format plus a literal "%" suffix instead.
+                        #
+                        # The heatmap colorscale (sbs4608_plot_config.py) is
+                        # five discrete bands at the 0/0.2/0.4/0.6/0.8/1.0
+                        # fractions of [zmin, zmax]. Label every band
+                        # boundary explicitly rather than letting Plotly's
+                        # autotick pick arbitrary round numbers that don't
+                        # line up with the colors the user is actually
+                        # looking at.
+                        zmin = trace.get("zmin", 0)
+                        zmax = trace.get("zmax", 0)
+                        band_fractions = (0, 0.2, 0.4, 0.6, 0.8, 1.0)
+                        tickvals = [zmin + frac * (zmax - zmin) for frac in band_fractions]
                         trace["colorbar"] = {
                             "len": config["len"],
                             "y": config["y"],
@@ -69,8 +81,9 @@ class TraceFormatter:
                             "xanchor": "left",
                             "xpad": 5,
                             "thickness": 20,
-                            "tickformat": ".1f",
-                            "ticksuffix": "%",
+                            "tickmode": "array",
+                            "tickvals": tickvals,
+                            "ticktext": [f"{val:.1f}%" for val in tickvals],
                         }
                         trace["showscale"] = True
                         shown_colorbars[trace["yaxis"]] = True

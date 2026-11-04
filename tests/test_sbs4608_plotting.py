@@ -67,11 +67,46 @@ def test_heatmap_colorbar_does_not_double_scale_percentages(tmp_path):
     assert heatmaps_with_colorbars, "expected at least one heatmap trace with a visible colorbar"
     for trace in heatmaps_with_colorbars:
         colorbar = trace["colorbar"]
-        assert colorbar["tickformat"] == ".1f", (
+        assert "tickformat" not in colorbar, (
             "a Plotly '%' tickformat (e.g. '.1%') would re-multiply by 100 on top of "
-            "apply_percentage_formatting()'s own *100 -- use a plain number format instead"
+            "apply_percentage_formatting()'s own *100 -- explicit ticktext is used instead"
         )
-        assert colorbar.get("ticksuffix") == "%"
+        for text in colorbar["ticktext"]:
+            assert text.endswith("%")
+            float(text[:-1])  # must parse as a plain number, not raise
+
+
+def test_heatmap_colorbar_labels_every_color_band_boundary(tmp_path):
+    # The heatmap colorscale (sbs4608_plot_config.py) is five discrete bands
+    # at the 0/0.2/0.4/0.6/0.8/1.0 fractions of [zmin, zmax]. Each boundary
+    # should carry its own percentage label instead of Plotly's autotick
+    # picking arbitrary round numbers unrelated to the band edges.
+    from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
+
+    path = _write_sbs4608_matrix(tmp_path / "sbs4608.tsv")
+    raw = load_raw4608(str(path), "Sample")
+    config = SBS4608PlotConfig(include_detailed_heatmaps=True, main_plot_type="default")
+    built = SBS4608PlotBuilder(SBS4608Data(raw, "Sample", "default"), config).build()
+
+    heatmaps_with_colorbars = [
+        t for t in built["traces"] if t.get("type") == "heatmap" and t.get("showscale")
+    ]
+    assert heatmaps_with_colorbars
+
+    for trace in heatmaps_with_colorbars:
+        colorbar = trace["colorbar"]
+        assert colorbar["tickmode"] == "array"
+        assert len(colorbar["tickvals"]) == 6
+        assert len(colorbar["ticktext"]) == 6
+
+        zmin, zmax = trace["zmin"], trace["zmax"]
+        expected_vals = [zmin + frac * (zmax - zmin) for frac in (0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+        for actual, expected in zip(colorbar["tickvals"], expected_vals):
+            assert actual == pytest.approx(expected)
+        for text, expected in zip(colorbar["ticktext"], expected_vals):
+            assert text == f"{expected:.1f}%"
 
 
 def test_plot_functions_are_public():
