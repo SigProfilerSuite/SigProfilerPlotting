@@ -25,6 +25,19 @@ sync_api = pytest.importorskip("playwright.sync_api")
 PAGE = 15          # plots drawn before the reader asks for more
 PAGE_4608 = 4
 
+# SBS4608 panel checkboxes, and the layout axes each panel owns.
+PANELS = {
+    "transcription_bias": "#opt-bias",
+    "total_heatmap": "#opt-total",
+    "detailed_heatmaps": "#opt-detailed",
+}
+PANEL_AXES = {
+    "transcription_bias": ["yaxis5", "yaxis6", "xaxis2", "xaxis3"],
+    "total_heatmap": ["yaxis4"],
+    "detailed_heatmaps": ["yaxis2", "yaxis3"],
+}
+VARIANTS = ("default", "strand_bias", "genic_bias")
+
 XSS_NAMES = [
     "<img src=x onerror=window.__pwned=1>",
     "<svg onload=window.__pwned=2>",
@@ -111,6 +124,48 @@ def _drag(page, plot, start, end, steps=12):
     page.mouse.move(box["x"] + box["width"] * end[0], box["y"] + box["height"] * end[1],
                     steps=steps)
     page.mouse.up()
+
+
+def _sbs4608_page(page, tmp_path):
+    """One SBS4608 sample drawn, and the figures the server sent for it."""
+    path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", ["S0"], low=0, high=20)
+    _upload(page, path, "SBS4608", 1)
+    return page.evaluate(
+        "() => fetch('/api/render?sample=S0&unit=counts').then(r => r.json())")["variants"]
+
+
+def _height(plot):
+    return plot.evaluate("gd => gd.layout.height")
+
+
+def _wait_height(page, test, full):
+    page.wait_for_function(
+        f"full => document.querySelector('.card .js-plotly-plot').layout.height {test} full",
+        arg=full)
+
+
+def _reference_compact_plot():
+    """plotInteractive's own compactPlot, from the page it exports."""
+    from sigProfilerPlotting import sbs4608_interactive
+
+    page = sbs4608_interactive._SBS4608_PAGE_TEMPLATE.replace("{{", "{").replace("}}", "}")
+    start = page.index("const SECTION_AXES")
+    end = page.index("function applyPlotOptions")
+    return f"(() => {{ {page[start:end]}\n return compactPlot; }})()"
+
+
+# What a reader can see change when panels are hidden: which traces show,
+# where every panel sits, how tall the figure is, and the legend.
+_PROJECT = """(traces, layout) => ({
+  visible: traces.map(t => t.visible === undefined ? null : t.visible),
+  domains: Object.keys(layout).filter(k => /^[xy]axis\\d*$/.test(k)).sort()
+    .map(k => [k, layout[k].domain || null, layout[k].visible === undefined ? null : layout[k].visible]),
+  height: layout.height,
+  showlegend: layout.showlegend === undefined ? null : layout.showlegend,
+  legend: layout.legend ? [layout.legend.orientation || null, layout.legend.x ?? null,
+    layout.legend.y ?? null, layout.legend.xanchor || null, layout.legend.yanchor || null] : null,
+  annotations: (layout.annotations || []).map(a => [a.y, a.visible === undefined ? null : a.visible]),
+})"""
 
 
 def _render_requests(page):
@@ -317,6 +372,119 @@ def test_sbs4608_switches_the_whole_figure(tmp_path):
         _upload(page, other, "SBS96", 1)
         assert page.is_visible("#unitPanel")
         assert page.is_hidden("#variantPanel")
+
+
+def test_each_sbs4608_panel_can_be_hidden_and_restored(tmp_path):
+    with _dashboard() as page:
+        variants = _sbs4608_page(page, tmp_path)
+        served = variants["default"]
+        plot = _plot(page)
+        full = _height(plot)
+        assert full == served["layout"]["height"]
+        for panel, box in PANELS.items():
+            page.uncheck(box)
+            _wait_height(page, "<", full)
+            start, end = served["sections"][panel]["trace_range"]
+            assert end > start
+            visible = plot.evaluate("gd => gd.data.map(t => t.visible)")
+            assert all(v is False for v in visible[start:end]), panel
+            assert all(v is not False for i, v in enumerate(visible)
+                       if not start <= i < end), panel
+            for axis in PANEL_AXES[panel]:
+                if axis in served["layout"]:
+                    assert plot.evaluate(f"gd => gd.layout.{axis}.visible") is False, axis
+
+            page.check(box)
+            _wait_height(page, "===", full)
+            assert all(v is not False
+                       for v in plot.evaluate("gd => gd.data.map(t => t.visible)")), panel
+
+
+def test_sbs4608_panels_are_packed_exactly_as_plot_interactive_packs_them(tmp_path):
+    """The dashboard's copy of compactPlot against the export's own, for every
+    combination of panels in every top-panel view."""
+    with _dashboard() as page:
+        variants = _sbs4608_page(page, tmp_path)
+        page.evaluate(f"v => {{ window.__served = v; window.__reference = {_reference_compact_plot()};"
+                      f" window.__project = {_PROJECT}; }}", variants)
+        names = list(PANELS)
+        for variant in VARIANTS:
+            page.check(f'input[name="variant"][value="{variant}"]', force=True)
+            for step in range(8):
+                gray = step ^ (step >> 1)              # one box changes per step
+                toggles = {name: not gray & (1 << i) for i, name in enumerate(names)}
+                for name, on in toggles.items():
+                    page.set_checked(PANELS[name], on)
+                compare = ("([variant, toggles]) => {"
+                           " const gd = document.querySelector('.card .js-plotly-plot');"
+                           " const ref = window.__reference(window.__served[variant], toggles);"
+                           " return [JSON.stringify(window.__project(gd.data, gd.layout)),"
+                           "         JSON.stringify(window.__project(ref.traces, ref.layout))]; }")
+                try:
+                    page.wait_for_function(f"a => {{ const [got, want] = ({compare})(a);"
+                                           " return got === want; }", arg=[variant, toggles])
+                except sync_api.TimeoutError:
+                    got, want = page.evaluate(compare, [variant, toggles])
+                    assert got == want, (variant, toggles)
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "plotInteractive's compactPlot, ported unchanged, keeps a footer for the "
+    "strand/genic legend as a fixed share of the figure. Once all three panels "
+    "are hidden the figure is ~500 px tall, the footer is smaller than the "
+    "legend, and the legend covers the x labels and the foot of the bars. The "
+    "HTML export from plotInteractive does the same."))
+def test_hiding_every_panel_keeps_the_strand_legend_clear_of_the_plot(tmp_path):
+    with _dashboard() as page:
+        variants = _sbs4608_page(page, tmp_path)
+        plot = _plot(page)
+        page.check('input[name="variant"][value="strand_bias"]', force=True)
+        full = variants["strand_bias"]["layout"]["height"]
+        _wait_height(page, "===", full)
+        for box in PANELS.values():
+            page.uncheck(box)
+        page.wait_for_function(
+            "() => document.querySelectorAll('.card .js-plotly-plot')[0]"
+            ".data.every(t => t.visible !== false || t.xaxis !== 'x' || t.yaxis !== 'y')"
+            " && document.querySelectorAll('#opt-bias:checked, #opt-total:checked,"
+            " #opt-detailed:checked').length === 0")
+        _wait_height(page, "<", full)
+        page.wait_for_timeout(300)
+
+        legend = plot.evaluate("gd => gd.layout.legend")
+        assert plot.evaluate("gd => gd.layout.showlegend") is not False
+        assert (legend["orientation"], legend["xanchor"], legend["yanchor"]) == \
+            ("h", "center", "bottom")
+        # In the drawn figure: the legend has entries, sits inside the figure,
+        # and overlaps neither the bars nor their x labels.
+        boxes = plot.evaluate("""gd => {
+          const r = el => { const b = el.getBoundingClientRect();
+                            return {top: b.top, bottom: b.bottom, left: b.left, right: b.right}; };
+          return {
+            legend: r(gd.querySelector('g.legend')),
+            entries: gd.querySelectorAll('g.legend g.traces').length,
+            bars: r(gd.querySelector('.nsewdrag[data-subplot="xy"]')),
+            labels: r(gd.querySelector('g.xaxislayer-above')),
+            figure: r(gd.querySelector('svg.main-svg')),
+          }; }""")
+
+        def apart(a, b):
+            return (a["bottom"] <= b["top"] or b["bottom"] <= a["top"]
+                    or a["right"] <= b["left"] or b["right"] <= a["left"])
+
+        assert boxes["entries"] > 0
+        assert apart(boxes["legend"], boxes["bars"])
+        assert apart(boxes["legend"], boxes["labels"])
+        assert boxes["legend"]["bottom"] <= boxes["figure"]["bottom"]
+
+        # Another view keeps the panels hidden; the default view has no
+        # strand legend to keep, so it shows none.
+        page.check('input[name="variant"][value="default"]', force=True)
+        page.wait_for_function(
+            "() => document.querySelector('.card .js-plotly-plot').layout.showlegend === false")
+        start, end = variants["default"]["sections"]["total_heatmap"]["trace_range"]
+        visible = plot.evaluate("gd => gd.data.map(t => t.visible)")
+        assert all(v is False for v in visible[start:end])
 
 
 # --------------------------------------------------------------- safety

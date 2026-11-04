@@ -119,6 +119,16 @@ button:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
 .panel:has(#matrixFile:focus-visible) .file-button { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .row { display: flex; gap: 8px; }
+
+.subhead { margin: 2px 0 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+
+.checks {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 0; padding: 0; border: 0; min-width: 0;
+}
+.checks legend { padding: 0; margin-bottom: 2px; }
+.checks label { display: flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
+.checks input { accent-color: var(--accent); margin: 0; }
 .row button { flex: 1; }
 
 .search {
