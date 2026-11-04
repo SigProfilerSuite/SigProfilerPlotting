@@ -253,22 +253,81 @@ def _generic(matrix, sample, values, ytitle, fmt):
     return figure
 
 
+def _scale_sbs4608_unit(built: dict, total: float, unit: str) -> None:
+    """Rescale an already-built SBS4608 figure out of its internal percent-
+    of-`total` representation.
+
+    SBS4608Data/SBS4608PlotBuilder (shared with plotInteractive(), which
+    keeps its own percent-only COSMIC-style look unchanged) always
+    renormalize every contribution to a percentage of `total` first. Every
+    number this function touches is ultimately a sum of those per-row
+    percentages, i.e. `contribution * (100 / total)` for one fixed `total`
+    -- so undoing that scale factor is a uniform linear transform, safe to
+    apply after the fact rather than re-deriving each view from raw counts.
+
+    Traces left untouched on purpose: the "Strand Bias (%)"/"Genic (%)"
+    sub-panel (yaxis5/yaxis6, scatter traces) and its text labels are
+    ratios between two sibling bars (e.g. Transcribed vs Untranscribed), not
+    shares of `total` -- they were never percent-of-total to begin with, so
+    "counts"/"proportion" must not change them.
+    """
+    if unit == "percent" or total <= 0:
+        return
+    factor = (total / 100.0) if unit == "counts" else (1.0 / 100.0)
+    if unit == "counts":
+        value_text = "%{z:,.0f}"
+        tick_text = lambda v: f"{v:,.0f}"  # noqa: E731
+    else:
+        value_text = "%{z:.4f}"
+        tick_text = lambda v: f"{v:.4f}"  # noqa: E731
+
+    for trace in built["traces"]:
+        if trace.get("type") == "heatmap":
+            if trace.get("z"):
+                trace["z"] = [[cell * factor for cell in row] for row in trace["z"]]
+            if "zmin" in trace:
+                trace["zmin"] = trace["zmin"] * factor
+            if "zmax" in trace:
+                trace["zmax"] = trace["zmax"] * factor
+            colorbar = trace.get("colorbar")
+            if colorbar and colorbar.get("tickmode") == "array":
+                colorbar["tickvals"] = [v * factor for v in colorbar["tickvals"]]
+                colorbar["ticktext"] = [tick_text(v) for v in colorbar["tickvals"]]
+            trace["hovertemplate"] = f"x: %{{x}}<br>y: %{{y}}<br>Value: {value_text}<extra></extra>"
+        elif trace.get("type") == "bar" and trace.get("yaxis") in (None, "y"):
+            # The main plot's own bar trace(s): either the default 96-bar
+            # chart, or the strand/genic-bias stacked bars -- both are
+            # percent-of-total (not the ratio-only transcription-bias panel,
+            # whose traces are type "scatter" on yaxis5/yaxis6).
+            if trace.get("y"):
+                trace["y"] = [v * factor for v in trace["y"]]
+
+    yaxis = built["layout"].get("yaxis")
+    if yaxis:
+        title = (
+            "Number of Single Base Substitutions"
+            if unit == "counts"
+            else "Proportion of Single Base Substitutions"
+        )
+        yaxis["title"] = {**yaxis.get("title", {}), "text": title}
+        yaxis.pop("ticksuffix", None)
+        yaxis["tickformat"] = "~s" if unit == "counts" else ".3f"
+        if "range" in yaxis:
+            yaxis["range"] = [v * factor for v in yaxis["range"]]
+
+
 def _sbs4608(matrix: MatrixData, sample: str, unit: str) -> dict:
     from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
     from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
     from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
 
-    # `unit` is intentionally unused here: SBS4608Data/SBS4608PlotBuilder
-    # already renormalize every contribution to a percentage of its own
-    # total internally (matching plotInteractive, which has no raw-counts
-    # mode at all), so pre-dividing by total here would be a no-op -- the
-    # dashboard UI hides the counts/percentage/proportion control for this
-    # context rather than offering a choice that can't change the output.
     raw = matrix.raw4608(sample)
+    total = sum(float(row["contribution"]) for row in raw)
     variants = {}
     for main_type in ("default", "strand_bias", "genic_bias"):
         config = SBS4608PlotConfig(include_detailed_heatmaps=True, main_plot_type=main_type)
         built = SBS4608PlotBuilder(SBS4608Data(raw, sample, main_type), config).build()
+        _scale_sbs4608_unit(built, total, unit)
         total_top = config.total_heatmap_domain[1]
         built["sections"]["total_heatmap"]["paper_band"] = [0.19, total_top]
         built["sections"]["detailed_heatmaps"]["paper_band"] = [total_top, config.main_plot_domain[0]]
