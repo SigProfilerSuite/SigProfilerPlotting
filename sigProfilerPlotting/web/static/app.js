@@ -121,7 +121,31 @@ function loadMatrix(info) {
   $('matrixSummary').textContent =
     `${state.context} · ${info.labels_count} mutation contexts · ` +
     `${n} ${n === 1 ? 'sample' : 'samples'}`;
-  $('variantPanel').classList.toggle('hidden', state.context !== 'SBS4608');
+  // SBS1536 reuses the SBS4608 panel renderer (same "sbs4608" wire kind --
+  // a 1536-context matrix is exactly what SBS4608Data collapses to once
+  // strand is summed away) but has no strand/transcription data at all, so
+  // it only ever has a "default" view and no transcription-bias panel.
+  const hasPanels = state.context === 'SBS4608' || state.context === 'SBS1536';
+  const hasVariants = state.context === 'SBS4608';
+  state.variant = 'default';
+  // SBS1536 has no transcription-bias panel to show at all (no checkbox is
+  // rendered for it below) -- force that section off so compactPlot()
+  // reclaims the vertical space it would otherwise leave blank, and keep
+  // state.toggles/the checkboxes' checked state in sync either way so a
+  // later matrix in the same session starts from a consistent default
+  // rather than whatever was left over from the one before it.
+  state.toggles = { transcription_bias: hasVariants, total_heatmap: true, detailed_heatmaps: true };
+  $('opt-bias').checked = state.toggles.transcription_bias;
+  $('opt-total').checked = state.toggles.total_heatmap;
+  $('opt-detailed').checked = state.toggles.detailed_heatmaps;
+  $('variantPanel').classList.toggle('hidden', !hasPanels);
+  $('variantPanelTitle').textContent = `${state.context} view`;
+  $('topPanelGroup').classList.toggle('hidden', !hasVariants);
+  $('biasCheckboxRow').classList.toggle('hidden', !hasVariants);
+  if (!hasVariants) {
+    const defaultRadio = document.querySelector('input[name="variant"][value="default"]');
+    if (defaultRadio) defaultRadio.checked = true;
+  }
   $('sampleSearch').value = '';
   for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = false;
   renderList();

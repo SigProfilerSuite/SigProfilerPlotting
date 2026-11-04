@@ -201,6 +201,65 @@ def test_sbs4608_renderer_builds_three_variants():
         assert "layout" in variant
 
 
+def _sbs1536_matrix(values=None):
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    labels = list(matrix_module.REFERENCE_CONTEXTS["SBS1536"])
+    values = values or {label: float(i % 13 + 1) for i, label in enumerate(labels)}
+    return MatrixData(
+        context="SBS1536",
+        labels=tuple(labels),
+        columns=("S1",),
+        values=tuple((values.get(label, 0.0),) for label in labels),
+    ), sum(values.get(label, 0.0) for label in labels)
+
+
+def test_sbs1536_renderer_builds_only_a_default_variant_with_no_bias_panel():
+    matrix, total = _sbs1536_matrix()
+    figure = render_sample(matrix, "S1", unit="counts")
+    assert figure["kind"] == "sbs4608"
+    assert set(figure["variants"].keys()) == {"default"}
+    built = figure["variants"]["default"]
+    assert "traces" in built and "layout" in built
+    # No transcription-bias traces are ever built for this context.
+    bias_start, bias_end = built["sections"]["transcription_bias"]["trace_range"]
+    assert bias_start == bias_end == len(built["traces"])
+    # Nor is there a yaxis5/yaxis6/legend left behind for it.
+    assert "yaxis5" not in built["layout"]
+    assert "yaxis6" not in built["layout"]
+    assert "legend" not in built["layout"]
+    # The reserved bottom band is reclaimed, not left as blank padding.
+    assert built["layout"]["height"] < 1200
+
+
+def test_sbs1536_counts_unit_recovers_raw_totals():
+    matrix, total = _sbs1536_matrix()
+    built = render_sample(matrix, "S1", unit="counts")["variants"]["default"]
+    bar_sum = sum(v for t in built["traces"] if t.get("type") == "bar" for v in t["y"])
+    assert bar_sum == pytest.approx(total)
+    heatmap_sum = sum(
+        cell
+        for t in built["traces"]
+        if t.get("type") == "heatmap" and t.get("yaxis") == "y4"
+        for row in t["z"]
+        for cell in row
+    )
+    assert heatmap_sum == pytest.approx(total)
+    assert built["layout"]["yaxis"]["title"]["text"] == "Number of Single Base Substitutions"
+
+
+def test_sbs1536_total_heatmap_hover_has_no_fabricated_strand_breakdown():
+    matrix, _total = _sbs1536_matrix()
+    built = render_sample(matrix, "S1", unit="percent")["variants"]["default"]
+    total_heatmap_traces = [
+        t for t in built["traces"] if t.get("type") == "heatmap" and t.get("yaxis") == "y4"
+    ]
+    assert total_heatmap_traces
+    for trace in total_heatmap_traces:
+        assert "T:" not in trace["hovertemplate"]
+        assert "customdata.T" not in trace["hovertemplate"]
+
+
 def _uniform_sbs4608_matrix(value=1.0):
     labels = []
     for strand in "TUN":
