@@ -100,8 +100,28 @@ Any of these will cleanly shut the server down:
    share, 0-1) at any time -- every open chart redraws immediately.
 5. For `SBS4608` and `SBS1536` matrices, an extra panel controls which
    panels of the multi-part figure are shown (see below).
-6. Every chart supports the standard Plotly toolbar: hover for exact values,
+6. For `SBS96` matrices, selecting **exactly one** sample or signature
+   enables a **Compare with COSMIC** panel (see below).
+7. Every chart supports the standard Plotly toolbar: hover for exact values,
    zoom/pan, reset the view, and export as a PNG or SVG image.
+
+## Comparing against COSMIC signatures
+
+With an `SBS96` matrix loaded and exactly one sample or signature selected,
+check **Compare with COSMIC signatures** in the sidebar and pick a genome
+build (`GRCh37`, `GRCh38`, `mm9`, `mm10`, `mm39`, `rn6`, or `rn7` -- COSMIC
+v3.6). The plot splits into two panels:
+
+* **Upper panel:** your selected sample/signature, unchanged.
+* **Lower panel:** the 5 COSMIC signatures from that build whose spectrum is
+  most similar to it, each drawn the same way and labeled with its cosine
+  similarity score, highest first.
+
+The comparison is scale-invariant -- it gives the same ranking regardless of
+whether the Values panel is set to Counts, Percentage, or Proportion. It
+deactivates automatically (and the checkbox unchecks itself) as soon as more
+than one sample/signature is selected, since "most similar to what" stops
+being well-defined at that point.
 
 ## Supported contexts
 

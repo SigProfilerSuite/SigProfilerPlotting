@@ -24,6 +24,7 @@ const state = {
   variant: 'default',
   // SBS4608 panels shown, as in plotInteractive: all on to begin with.
   toggles: { transcription_bias: true, total_heatmap: true, detailed_heatmaps: true },
+  cosmic: { builds: [], build: null, enabled: false },
   limit: 0,               // how many selected samples may be drawn
   cards: new Map(),       // sample name -> card
   generation: 0,          // bumped per matrix, so late answers are dropped
@@ -146,10 +147,69 @@ function loadMatrix(info) {
     const defaultRadio = document.querySelector('input[name="variant"][value="default"]');
     if (defaultRadio) defaultRadio.checked = true;
   }
+  // COSMIC comparison only makes sense for SBS96 (the only context the
+  // bundled reference signatures are matched against); reset per matrix so
+  // a comparison left on for one file doesn't silently carry into the next.
+  state.cosmic.enabled = false;
+  $('cosmicEnabled').checked = false;
+  $('cosmicPanel').classList.toggle('hidden', state.context !== 'SBS96');
   $('sampleSearch').value = '';
   for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = false;
   renderList();
+  syncCosmicControls();
   sync();
+}
+
+/* ------------------------------------------------------------- COSMIC */
+
+function cosmicEligible() {
+  return state.context === 'SBS96' && state.selected.size === 1;
+}
+
+// Keeps the Compare-with-COSMIC controls consistent with the current
+// selection -- called after every selection change (via updateCount()) and
+// on each matrix load, so the checkbox can never stay checked once it is
+// no longer meaningful (more than one, or zero, samples selected).
+function syncCosmicControls() {
+  const eligible = cosmicEligible();
+  if (!eligible && state.cosmic.enabled) {
+    state.cosmic.enabled = false;
+    $('cosmicEnabled').checked = false;
+    // A card already drawn in compare mode (e.g. the reader just selected a
+    // second sample, making the comparison no longer meaningful) does not
+    // otherwise get re-fetched just because the selection count changed --
+    // without this it would keep showing the now-stale comparison.
+    for (const card of state.cards.values()) loadCard(card);
+  }
+  $('cosmicEnabled').disabled = !eligible;
+  $('cosmicBuild').disabled = !eligible || !state.cosmic.enabled;
+  $('cosmicHint').classList.toggle('hidden', eligible);
+}
+
+async function loadCosmicBuilds() {
+  const select = $('cosmicBuild');
+  try {
+    const response = await fetch('/api/cosmic/builds');
+    const body = await readJson(response);
+    state.cosmic.builds = (response.ok && Array.isArray(body.builds)) ? body.builds : [];
+  } catch (e) {
+    state.cosmic.builds = [];
+  }
+  select.replaceChildren();
+  for (const build of state.cosmic.builds) {
+    const option = document.createElement('option');
+    option.value = build;
+    option.textContent = build;
+    select.append(option);
+  }
+  state.cosmic.build = state.cosmic.builds[0] || null;
+}
+
+function onCosmicChange() {
+  state.cosmic.enabled = $('cosmicEnabled').checked;
+  state.cosmic.build = $('cosmicBuild').value || state.cosmic.build;
+  syncCosmicControls();
+  for (const card of state.cards.values()) loadCard(card);
 }
 
 /* --------------------------------------------------------- sample list */
@@ -197,6 +257,7 @@ function updateCount() {
   const total = state.samples.length;
   $('selectionCount').textContent = total
     ? `${state.selected.size} of ${total} selected` : '';
+  syncCosmicControls();
 }
 
 function setSelected(items, on) {
@@ -229,6 +290,9 @@ function dropCard(name) {
   if (!card) return;
   card.alive = false;
   if (card.drawn && window.Plotly) Plotly.purge(card.plot);
+  if (window.Plotly) {
+    for (const el of card.el.querySelectorAll('.compare-grid .plot')) Plotly.purge(el);
+  }
   card.el.remove();
   state.cards.delete(name);
 }
@@ -244,11 +308,14 @@ function loadCard(card) {
   const token = ++card.token;
   const unit = state.unit;
   const generation = state.generation;
+  const compareCosmic = (state.cosmic.enabled && cosmicEligible() && state.cosmic.build) || null;
   const stale = () => !card.alive || card.token !== token || generation !== state.generation;
   setStatus(card, card.drawn ? 'Updating' : 'Loading', 'loading');
   enqueue(async () => {
     if (stale()) return null;
-    const query = new URLSearchParams({ sample: card.name, unit });
+    const params = { sample: card.name, unit };
+    if (compareCosmic) params.compare_cosmic = state.cosmic.build;
+    const query = new URLSearchParams(params);
     const response = await fetch(`/api/render?${query}`);
     const body = await readJson(response);
     if (!response.ok) throw new Error(body.error || `The server answered ${response.status}.`);
@@ -266,6 +333,10 @@ function loadCard(card) {
 function figureOf(card) {
   const d = card.data;
   if (d.kind === 'standard') return d.figure;
+  // The upper panel of a COSMIC comparison is drawn through this exact same
+  // single-figure path as any other SBS96 plot; only the lower panel (the
+  // 5 match mini-plots, drawCompareMatches() below) needs anything extra.
+  if (d.kind === 'sbs96_compare') return d.query;
   if (d.kind === 'sbs4608') return d.variants && d.variants[state.variant];
   return null;
 }
@@ -289,8 +360,41 @@ function draw(card) {
       if (!card.alive) return;
       card.drawn = true;
       setStatus(card, '', null);
+      drawCompareMatches(card);
     })
     .catch((e) => setStatus(card, `This plot could not be drawn: ${e.message}`, 'error'));
+}
+
+function drawCompareMatches(card) {
+  const compareEl = card.el.querySelector('.compare');
+  const grid = compareEl.querySelector('.compare-grid');
+  // Purge before rebuilding either way: cheap (at most 5 small plots, and
+  // only ever reachable with exactly one sample selected), and avoids
+  // tracking per-match Plotly state across redraws (unit change, a
+  // different COSMIC build, or leaving compare mode entirely).
+  for (const el of grid.querySelectorAll('.plot')) {
+    if (window.Plotly) Plotly.purge(el);
+  }
+  if (card.data.kind !== 'sbs96_compare') {
+    compareEl.classList.add('hidden');
+    grid.replaceChildren();
+    return;
+  }
+  compareEl.classList.remove('hidden');
+  const frag = document.createDocumentFragment();
+  const toRender = [];
+  for (const match of card.data.matches) {
+    const el = $('compareMatchTemplate').content.firstElementChild.cloneNode(true);
+    const plotEl = el.querySelector('.plot');
+    plotEl.setAttribute('aria-label', `${match.name}, cosine similarity ${match.score.toFixed(3)}`);
+    frag.append(el);
+    toRender.push({ plotEl, figure: match.figure });
+  }
+  grid.replaceChildren(frag);
+  for (const { plotEl, figure } of toRender) {
+    const { traces, layout, config } = structuredClone(figure);
+    Plotly.newPlot(plotEl, traces, layout, config);
+  }
 }
 
 /* ------------------------------------------------- SBS4608 panels */
@@ -518,7 +622,11 @@ function init() {
     r.addEventListener('change', () => r.checked && onVariant(r.value)));
   document.querySelectorAll('input[name="section"]').forEach((c) =>
     c.addEventListener('change', () => onToggle(c.value, c.checked)));
+  $('cosmicEnabled').addEventListener('change', onCosmicChange);
+  $('cosmicBuild').addEventListener('change', onCosmicChange);
   $('quitButton').addEventListener('click', quit);
+
+  loadCosmicBuilds();
 
   new IntersectionObserver((entries) => {
     state.sentinelVisible = entries.some((e) => e.isIntersecting);

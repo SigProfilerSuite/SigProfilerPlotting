@@ -138,6 +138,64 @@ def test_sbs96_renderer_percent_and_proportion_sum_correctly():
     assert sum(proportion_ys) == pytest.approx(1.0)
 
 
+def test_sbs96_compare_cosmic_returns_query_and_five_ranked_matches():
+    from sigProfilerPlotting.web import cosmic
+
+    reference = cosmic._load_build("GRCh37")["SBS4"]
+    matrix = _sbs96_matrix(reference)
+
+    result = render_sample(matrix, "S1", unit="counts", compare_cosmic="GRCh37")
+
+    assert result["kind"] == "sbs96_compare"
+    assert result["build"] == "GRCh37"
+    assert "traces" in result["query"] and "layout" in result["query"]
+    assert len(result["matches"]) == 5
+    # The query *is* SBS4, so it must rank itself first.
+    assert result["matches"][0]["name"] == "SBS4"
+    assert result["matches"][0]["score"] == pytest.approx(1.0, abs=1e-9)
+    scores = [m["score"] for m in result["matches"]]
+    assert scores == sorted(scores, reverse=True)
+    for match in result["matches"]:
+        assert "traces" in match["figure"] and "layout" in match["figure"]
+
+
+def test_sbs96_compare_cosmic_rejects_an_unknown_build():
+    from sigProfilerPlotting.web.matrix import MatrixError
+
+    matrix = _sbs96_matrix({"A[C>A]A": 3.0})
+    with pytest.raises(MatrixError):
+        render_sample(matrix, "S1", unit="counts", compare_cosmic="not-a-real-build")
+
+
+def test_sbs96_without_compare_cosmic_is_unaffected():
+    matrix = _sbs96_matrix({"A[C>A]A": 3.0})
+    result = render_sample(matrix, "S1", unit="counts")
+    assert result["kind"] == "standard"
+
+
+def test_sbs96_figure_keeps_consistent_header_spacing_at_any_height():
+    # _sbs96_figure's header-band/title offsets are computed in absolute
+    # pixels so a short figure (the COSMIC comparison panels) doesn't
+    # collide them -- assert the computed pixel gap from the axes top is
+    # identical regardless of `height`, the invariant that fix relies on.
+    import sigProfilerPlotting.web.matrix as matrix_module
+    from sigProfilerPlotting.web.renderers import _sbs96_figure
+
+    raw_by_label = {label: 0.0 for label in matrix_module.REFERENCE_CONTEXTS["SBS96"]}
+    raw_by_label["A[C>A]A"] = 3.0
+    tall = _sbs96_figure(raw_by_label, "S1", "counts", height=560)
+    short = _sbs96_figure(raw_by_label, "S1", "counts", height=300)
+
+    def band_pixels_above_axes(figure):
+        margin_t = figure["layout"]["margin"]["t"]
+        margin_b = figure["layout"]["margin"]["b"]
+        axes_height = figure["layout"]["height"] - margin_t - margin_b
+        y0 = figure["layout"]["shapes"][0]["y0"]
+        return (y0 - 1) * axes_height
+
+    assert band_pixels_above_axes(tall) == pytest.approx(band_pixels_above_axes(short), abs=0.01)
+
+
 def test_cnv48_renderer_groups_by_cnv_class(tmp_path):
     import sigProfilerPlotting.web.matrix as matrix_module
 

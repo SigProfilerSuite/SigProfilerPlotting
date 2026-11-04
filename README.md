@@ -141,7 +141,10 @@ sP.samplePortrait(sample_matrices_path, output_path, project, percentage=False)
 A local, browser-based dashboard lets you upload any supported matrix and
 explore it interactively (search/select samples, switch between
 counts/percentage/proportion, hover/zoom/pan/export) without writing any
-Python. It runs entirely on your machine and never sends data anywhere else.
+Python. For `SBS96` matrices, selecting a single sample or signature also
+lets you compare it against the COSMIC v3.6 reference signatures and see the
+5 best cosine-similarity matches side by side. It runs entirely on your
+machine and never sends data anywhere else.
 
 **How to launch it:**
 
