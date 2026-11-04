@@ -423,7 +423,18 @@ function sync() {
   }
 }
 
+let loadMoreCooldownUntil = 0;
+
 function loadMore() {
+  // #sentinel sits immediately after the "Load more" button in the DOM, so
+  // scrolling the button into view (as a real click, or Playwright's own
+  // actionability check, does) can itself bring the sentinel into the
+  // IntersectionObserver's rootMargin and fire the auto-load path too --
+  // one logical "load more" action must not advance state.limit twice just
+  // because both triggers landed within the same moment.
+  const now = Date.now();
+  if (now < loadMoreCooldownUntil) return;
+  loadMoreCooldownUntil = now + 400;
   state.limit += pageSize();
   sync();
 }
