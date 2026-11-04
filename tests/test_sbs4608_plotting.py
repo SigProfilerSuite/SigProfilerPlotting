@@ -221,7 +221,14 @@ def test_interactive_options_compact_and_restore_subplot_layout(
       }
     }
     """
-    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+    # The full-resolution compact/restore registry (3 variants, including
+    # detailed heatmaps) serialized into `script` can run into the low
+    # hundreds of KB -- past `node -e`'s command-line argument on some CI
+    # runners ("OSError: [Errno 7] Argument list too long"). A script file
+    # has no such limit.
+    script_path = tmp_path / "compact_plot_check.js"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run([node, str(script_path)], check=True, capture_output=True, text=True)
 
 
 def test_count_matrices_are_normalized_to_percentages(tmp_path):
