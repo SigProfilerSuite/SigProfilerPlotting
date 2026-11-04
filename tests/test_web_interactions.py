@@ -189,16 +189,17 @@ def test_only_the_first_page_of_plots_is_fetched(tmp_path):
         assert page.locator("#sampleList li").count() == 40
 
         # #sentinel sits immediately after this button in the DOM, so
-        # page.click()'s own scroll-into-view can drag the sentinel into the
-        # IntersectionObserver's rootMargin and kick off the auto-load path
-        # concurrently with the click -- the newly-inserted cards then shift
-        # the button underneath Playwright's pointer mid-click, making the
-        # click itself time out waiting for a stable target. Scroll and
-        # settle first (debounced loadMore() means this is harmless even if
-        # it does trigger the auto path), then click once the DOM is quiet.
-        page.locator("#loadMore").scroll_into_view_if_needed()
-        page.wait_for_timeout(300)
-        page.click("#loadMore")
+        # page.click()'s own scroll-into-view can itself drag the sentinel
+        # into the IntersectionObserver's rootMargin and fire the auto-load
+        # path concurrently with the click -- a race whose exact timing (and
+        # thus whether it manifests as a doubled page or an unstable click
+        # target) depends on runner speed, so no fixed wait reliably avoids
+        # it. Dispatch the click directly: it goes through the same listener
+        # a real click does, without Playwright's unrelated pointer-movement
+        # mechanics, which is the only part of a real click actually capable
+        # of moving the viewport and triggering the sentinel in the first
+        # place.
+        page.evaluate("document.getElementById('loadMore').click()")
         _wait_ready(page, 2 * PAGE)
         assert page.locator(".card").count() == 2 * PAGE
         assert len(requests) == 2 * PAGE
