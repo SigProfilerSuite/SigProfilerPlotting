@@ -188,6 +188,16 @@ def test_only_the_first_page_of_plots_is_fetched(tmp_path):
         assert page.text_content("#moreText") == f"Showing {PAGE} of 40 selected."
         assert page.locator("#sampleList li").count() == 40
 
+        # #sentinel sits immediately after this button in the DOM, so
+        # page.click()'s own scroll-into-view can drag the sentinel into the
+        # IntersectionObserver's rootMargin and kick off the auto-load path
+        # concurrently with the click -- the newly-inserted cards then shift
+        # the button underneath Playwright's pointer mid-click, making the
+        # click itself time out waiting for a stable target. Scroll and
+        # settle first (debounced loadMore() means this is harmless even if
+        # it does trigger the auto path), then click once the DOM is quiet.
+        page.locator("#loadMore").scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
         page.click("#loadMore")
         _wait_ready(page, 2 * PAGE)
         assert page.locator(".card").count() == 2 * PAGE
