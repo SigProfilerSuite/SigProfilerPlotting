@@ -296,9 +296,10 @@ def test_render_with_compare_cosmic_returns_the_comparison_payload(running_serve
     resp = conn.getresponse()
     assert resp.status == 200
     figure = json.loads(resp.read())
-    assert figure["kind"] == "sbs96_compare"
-    assert figure["build"] == "GRCh37"
-    assert len(figure["matches"]) == 5
+    assert figure["kind"] == "standard"
+    compare = figure["cosmic_compare"]
+    assert compare["build"] == "GRCh37"
+    assert len(compare["matches"]) == 5
     conn.close()
 
 

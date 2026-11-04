@@ -448,9 +448,9 @@ def test_sbs1536_has_no_variant_or_transcription_bias_controls(tmp_path):
         assert page.is_checked('input[name="variant"][value="default"]')
 
 
-def test_cosmic_comparison_only_activates_for_one_selected_sbs96_sample(tmp_path):
+def test_cosmic_comparison_only_activates_for_one_selected_sample(tmp_path):
     sbs96_path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1", "Sample2"])
-    sbs4608_path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", ["S0"], low=1, high=20)
+    dbs78_path = _write_matrix(tmp_path / "dbs78.txt", "DBS78", ["S0"])
     with _dashboard() as page:
         _upload(page, sbs96_path, "SBS96", 2)
         assert page.is_visible("#cosmicPanel")
@@ -467,6 +467,18 @@ def test_cosmic_comparison_only_activates_for_one_selected_sbs96_sample(tmp_path
             "() => document.querySelectorAll('.card .compare-match .js-plotly-plot').length === 5"
         )
         assert page.locator(".card .compare:not(.hidden)").count() == 1
+        # One full-size panel visible at a time, not a grid of 5.
+        assert page.text_content(".card .compare-position") == "1 of 5"
+
+        # The next/prev carousel controls move exactly one panel at a time.
+        page.click(".card .compare-next")
+        page.wait_for_function(
+            "() => document.querySelector('.card .compare-position').textContent === '2 of 5'"
+        )
+        page.click(".card .compare-prev")
+        page.wait_for_function(
+            "() => document.querySelector('.card .compare-position').textContent === '1 of 5'"
+        )
 
         # Selecting a second sample makes the comparison stop applying --
         # the checkbox unchecks itself and the stale comparison is cleared
@@ -479,9 +491,25 @@ def test_cosmic_comparison_only_activates_for_one_selected_sbs96_sample(tmp_path
         assert page.is_disabled("#cosmicEnabled")
         assert page.locator(".card .compare:not(.hidden)").count() == 0
 
-        # A non-SBS96 matrix never offers the comparison at all.
-        _upload(page, sbs4608_path, "SBS4608", 1)
+        # A context the comparison has no trinucleotide collapse for never
+        # offers it at all.
+        _upload(page, dbs78_path, "DBS78", 1)
         assert page.is_hidden("#cosmicPanel")
+
+
+@pytest.mark.parametrize("context", ["SBS288", "SBS1536", "SBS4608"])
+def test_cosmic_comparison_is_available_for_collapsible_sbs_contexts(tmp_path, context):
+    path = _write_matrix(tmp_path / f"{context}.txt", context, ["S0"], low=1, high=20)
+    with _dashboard() as page:
+        _upload(page, path, context, 1)
+        assert page.is_visible("#cosmicPanel")
+        assert not page.is_disabled("#cosmicEnabled")
+
+        page.check("#cosmicEnabled", force=True)
+        page.wait_for_function(
+            "() => document.querySelectorAll('.card .compare-match .js-plotly-plot').length === 5"
+        )
+        assert page.locator(".card .compare:not(.hidden)").count() == 1
 
 
 def test_sbs4608_switches_the_whole_figure(tmp_path):

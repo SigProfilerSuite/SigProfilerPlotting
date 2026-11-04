@@ -507,31 +507,49 @@ def _sbs1536(matrix: MatrixData, sample: str, unit: str) -> dict:
     return {"kind": "sbs4608", "variants": {"default": built}}
 
 
-def _cosmic_comparison(matrix: MatrixData, sample: str, unit: str, build: str) -> dict:
-    """Query (upper panel) + the 5 most cosine-similar COSMIC signatures
-    (lower panel), each drawn through the same classic SBS96 renderer as
-    the query so their shapes are directly, visually comparable.
+# Contexts the COSMIC comparison is offered for -- any SBS context with a
+# well-defined trinucleotide collapse (cosmic.collapse_to_sbs96 strips a
+# strand tag and/or wider pentanucleotide flanks down to the 96 contexts
+# COSMIC's own catalogue is expressed in).
+COSMIC_COMPATIBLE_CONTEXTS = ("SBS96", "SBS288", "SBS1536", "SBS4608")
+
+
+def _cosmic_compare_unit(unit: str) -> str:
+    # A reference signature has no "raw count" of its own -- it is already a
+    # normalized profile -- so "counts" falls back to "proportion" rather
+    # than being meaningless. "percent" and "proportion" both make sense and
+    # pass straight through, matching whatever the reader has the main
+    # Values control set to.
+    return unit if unit in ("percent", "proportion") else "proportion"
+
+
+def _cosmic_compare(matrix: MatrixData, sample: str, unit: str, build: str) -> dict:
+    """The 5 COSMIC signatures (from `build`) most cosine-similar to this
+    sample/signature, each drawn through the same classic SBS96 renderer as
+    the query (at full size, so they're directly, visually comparable) and
+    ranked highest-similarity first.
+
+    Works for any context in COSMIC_COMPATIBLE_CONTEXTS: raw_by_label is
+    collapsed to the 96 trinucleotide contexts first (a no-op for an
+    already-96-context SBS96 matrix).
     """
     from . import cosmic
 
     raw_by_label = dict(zip(matrix.labels, matrix.sample_values(sample)))
-    query_figure = _sbs96_figure(raw_by_label, sample, unit)
-    matches = cosmic.top_matches(raw_by_label, build)
+    collapsed = cosmic.collapse_to_sbs96(raw_by_label)
+    matches = cosmic.top_matches(collapsed, build)
+    match_unit = _cosmic_compare_unit(unit)
     match_figures = [
         {
             "name": match["name"],
             "score": match["score"],
             "figure": _sbs96_figure(
-                match["values"],
-                f"{match['name']} (cos {match['score']:.3f})",
-                "proportion",
-                height=300,
-                title_font_size=13,
+                match["values"], f"{match['name']} (cos {match['score']:.3f})", match_unit
             ),
         }
         for match in matches
     ]
-    return {"kind": "sbs96_compare", "query": query_figure, "matches": match_figures, "build": build}
+    return {"build": build, "matches": match_figures}
 
 
 def render_sample(
@@ -541,20 +559,27 @@ def render_sample(
     if unit not in ("counts", "percent", "proportion"):
         raise MatrixError("unit must be 'counts', 'percent', or 'proportion'")
     if matrix.context == "SBS4608":
-        return _sbs4608(matrix, sample, unit)
-    if matrix.context == "SBS1536":
-        return _sbs1536(matrix, sample, unit)
-    if matrix.context == "SBS96":
-        if compare_cosmic:
-            return _cosmic_comparison(matrix, sample, unit, compare_cosmic)
+        response = _sbs4608(matrix, sample, unit)
+    elif matrix.context == "SBS1536":
+        response = _sbs1536(matrix, sample, unit)
+    elif matrix.context == "SBS96":
         # Bypasses the generic _unit()/_grouped() path entirely: SBS96 gets
         # its own classic SigProfilerPlotting layout (header bands, colored
         # trinucleotide ticks) rather than the shared legend-based style.
-        return {"kind": "standard", "figure": _sbs96(matrix, sample, unit)}
-    raw = matrix.sample_values(sample)
-    values, ytitle, fmt = _unit(raw, unit)
-    renderer = {
-        "SBS288": _sbs288, "DBS78": _dbs78,
-        "ID83": _id83, "CNV48": _cnv48, "SV32": _sv32,
-    }.get(matrix.context, _generic)
-    return {"kind": "standard", "figure": renderer(matrix, sample, values, ytitle, fmt)}
+        response = {"kind": "standard", "figure": _sbs96(matrix, sample, unit)}
+    else:
+        raw = matrix.sample_values(sample)
+        values, ytitle, fmt = _unit(raw, unit)
+        renderer = {
+            "SBS288": _sbs288, "DBS78": _dbs78,
+            "ID83": _id83, "CNV48": _cnv48, "SV32": _sv32,
+        }.get(matrix.context, _generic)
+        response = {"kind": "standard", "figure": renderer(matrix, sample, values, ytitle, fmt)}
+
+    if compare_cosmic and matrix.context in COSMIC_COMPATIBLE_CONTEXTS:
+        # An addition alongside whatever the context's own "kind" already
+        # is, not a separate response shape -- so every context keeps its
+        # normal rendering (SBS4608/SBS1536's multi-panel view included)
+        # with the comparison attached underneath it.
+        response["cosmic_compare"] = _cosmic_compare(matrix, sample, unit, compare_cosmic)
+    return response

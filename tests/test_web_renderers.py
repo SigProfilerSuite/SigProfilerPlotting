@@ -138,7 +138,7 @@ def test_sbs96_renderer_percent_and_proportion_sum_correctly():
     assert sum(proportion_ys) == pytest.approx(1.0)
 
 
-def test_sbs96_compare_cosmic_returns_query_and_five_ranked_matches():
+def test_sbs96_compare_cosmic_attaches_ranked_matches_alongside_the_normal_kind():
     from sigProfilerPlotting.web import cosmic
 
     reference = cosmic._load_build("GRCh37")["SBS4"]
@@ -146,17 +146,76 @@ def test_sbs96_compare_cosmic_returns_query_and_five_ranked_matches():
 
     result = render_sample(matrix, "S1", unit="counts", compare_cosmic="GRCh37")
 
-    assert result["kind"] == "sbs96_compare"
-    assert result["build"] == "GRCh37"
-    assert "traces" in result["query"] and "layout" in result["query"]
-    assert len(result["matches"]) == 5
+    # The comparison is an addition, not a different response shape -- SBS96
+    # still renders through its normal "standard" kind.
+    assert result["kind"] == "standard"
+    assert "traces" in result["figure"] and "layout" in result["figure"]
+
+    compare = result["cosmic_compare"]
+    assert compare["build"] == "GRCh37"
+    assert len(compare["matches"]) == 5
     # The query *is* SBS4, so it must rank itself first.
-    assert result["matches"][0]["name"] == "SBS4"
-    assert result["matches"][0]["score"] == pytest.approx(1.0, abs=1e-9)
-    scores = [m["score"] for m in result["matches"]]
+    assert compare["matches"][0]["name"] == "SBS4"
+    assert compare["matches"][0]["score"] == pytest.approx(1.0, abs=1e-9)
+    scores = [m["score"] for m in compare["matches"]]
     assert scores == sorted(scores, reverse=True)
-    for match in result["matches"]:
+    for match in compare["matches"]:
         assert "traces" in match["figure"] and "layout" in match["figure"]
+
+
+@pytest.mark.parametrize("context", ["SBS288", "SBS1536", "SBS4608"])
+def test_cosmic_compare_collapses_other_sbs_contexts_to_96(context):
+    """A matrix in a wider SBS context (strand-tagged and/or a bigger
+    flanking window) still gets a comparison, collapsed down to the 96
+    trinucleotide contexts COSMIC's own catalogue uses."""
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    if context == "SBS4608":
+        from sigProfilerPlotting.sbs4608.sbs4608_data import DINUCS, SUBS
+
+        labels = [
+            f"{strand}:{left}[{sub}]{right}"
+            for strand in "TUN"
+            for sub in SUBS
+            for left in DINUCS
+            for right in DINUCS
+        ]
+    else:
+        labels = list(matrix_module.REFERENCE_CONTEXTS[context])
+    matrix = MatrixData(
+        context=context,
+        labels=tuple(labels),
+        columns=("S1",),
+        values=tuple((1.0,) for _ in labels),
+    )
+
+    result = render_sample(matrix, "S1", unit="counts", compare_cosmic="GRCh37")
+
+    compare = result["cosmic_compare"]
+    assert compare["build"] == "GRCh37"
+    assert len(compare["matches"]) == 5
+    scores = [m["score"] for m in compare["matches"]]
+    assert scores == sorted(scores, reverse=True)
+    # A uniform input collapses to a uniform 96-context vector, which some
+    # signature should resemble at least loosely.
+    assert scores[0] > 0
+
+
+def test_cosmic_compare_unit_follows_percent_but_falls_back_from_counts():
+    matrix = _sbs96_matrix({"A[C>A]A": 3.0})
+
+    percent_result = render_sample(matrix, "S1", unit="percent", compare_cosmic="GRCh37")
+    counts_result = render_sample(matrix, "S1", unit="counts", compare_cosmic="GRCh37")
+    proportion_result = render_sample(matrix, "S1", unit="proportion", compare_cosmic="GRCh37")
+
+    def match_ytitle(result):
+        return result["cosmic_compare"]["matches"][0]["figure"]["layout"]["yaxis"]["title"]["text"]
+
+    assert match_ytitle(percent_result) == "Percentage of Single Base Substitutions"
+    # "Counts" has no meaning for a reference signature -- falls back to
+    # proportion rather than, say, erroring or showing a meaningless count.
+    assert match_ytitle(counts_result) == "Proportion of Single Base Substitutions"
+    assert match_ytitle(proportion_result) == "Proportion of Single Base Substitutions"
 
 
 def test_sbs96_compare_cosmic_rejects_an_unknown_build():
