@@ -107,21 +107,32 @@ Any of these will cleanly shut the server down:
 
 ## Comparing against COSMIC signatures
 
-With an `SBS96` matrix loaded and exactly one sample or signature selected,
-check **Compare with COSMIC signatures** in the sidebar and pick a genome
-build (`GRCh37`, `GRCh38`, `mm9`, `mm10`, `mm39`, `rn6`, or `rn7` -- COSMIC
-v3.6). The plot splits into two panels:
+With an `SBS96`, `SBS288`, `SBS1536`, or `SBS4608` matrix loaded and exactly
+one sample or signature selected, check **Compare with COSMIC signatures**
+in the sidebar and pick a genome build (`GRCh37`, `GRCh38`, `mm9`, `mm10`,
+`mm39`, `rn6`, or `rn7` -- COSMIC v3.6). The plot splits into two panels:
 
-* **Upper panel:** your selected sample/signature, unchanged.
+* **Upper panel:** your selected sample/signature, unchanged -- including
+  `SBS4608`/`SBS1536`'s own multi-part view.
 * **Lower panel:** the 5 COSMIC signatures from that build whose spectrum is
-  most similar to it, each drawn the same way and labeled with its cosine
-  similarity score, highest first.
+  most similar to it, each drawn full size (the same size as the upper
+  panel) and labeled with its cosine similarity score. One is shown at a
+  time, highest-similarity first; scroll the panel, or use the **‹**/**›**
+  buttons, to move through the rest.
+
+`SBS288` (strand-tagged trinucleotide), `SBS1536` (pentanucleotide), and
+`SBS4608` (strand-tagged pentanucleotide) are compared by first collapsing
+them down to the 96 trinucleotide contexts COSMIC's own catalogue uses --
+summing out the strand tag and/or the wider flanking bases. An `SBS96`
+matrix needs no collapsing.
 
 The comparison is scale-invariant -- it gives the same ranking regardless of
-whether the Values panel is set to Counts, Percentage, or Proportion. It
-deactivates automatically (and the checkbox unchecks itself) as soon as more
-than one sample/signature is selected, since "most similar to what" stops
-being well-defined at that point.
+whether the Values panel is set to Counts, Percentage, or Proportion (the
+comparison panels themselves follow Percentage/Proportion, since a
+reference signature has no raw count of its own; Counts falls back to
+Proportion there). It deactivates automatically (and the checkbox unchecks
+itself) as soon as more than one sample/signature is selected, since "most
+similar to what" stops being well-defined at that point.
 
 ## Supported contexts
 

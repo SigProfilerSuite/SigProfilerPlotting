@@ -12,6 +12,10 @@ const PAGE = 15;
 const PAGE_4608 = 4;      // each SBS4608 sample is three full figures, ~0.7 MB
 const MAX_PARALLEL = 3;   // render requests in flight at once
 const SELECT_ALL_THRESHOLD = 100; // above this many samples/signatures, default to just the first
+// Contexts cosmic.collapse_to_sbs96() can reduce to the 96 trinucleotide
+// contexts COSMIC's own catalogue uses -- matches sigProfilerPlotting/web/
+// renderers.py's COSMIC_COMPATIBLE_CONTEXTS.
+const COSMIC_COMPATIBLE_CONTEXTS = new Set(['SBS96', 'SBS288', 'SBS1536', 'SBS4608']);
 
 const $ = (id) => document.getElementById(id);
 
@@ -147,12 +151,12 @@ function loadMatrix(info) {
     const defaultRadio = document.querySelector('input[name="variant"][value="default"]');
     if (defaultRadio) defaultRadio.checked = true;
   }
-  // COSMIC comparison only makes sense for SBS96 (the only context the
-  // bundled reference signatures are matched against); reset per matrix so
+  // COSMIC comparison only makes sense for the contexts collapse_to_sbs96()
+  // can reduce to the 96 COSMIC trinucleotide contexts; reset per matrix so
   // a comparison left on for one file doesn't silently carry into the next.
   state.cosmic.enabled = false;
   $('cosmicEnabled').checked = false;
-  $('cosmicPanel').classList.toggle('hidden', state.context !== 'SBS96');
+  $('cosmicPanel').classList.toggle('hidden', !COSMIC_COMPATIBLE_CONTEXTS.has(state.context));
   $('sampleSearch').value = '';
   for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = false;
   renderList();
@@ -163,7 +167,7 @@ function loadMatrix(info) {
 /* ------------------------------------------------------------- COSMIC */
 
 function cosmicEligible() {
-  return state.context === 'SBS96' && state.selected.size === 1;
+  return COSMIC_COMPATIBLE_CONTEXTS.has(state.context) && state.selected.size === 1;
 }
 
 // Keeps the Compare-with-COSMIC controls consistent with the current
@@ -291,7 +295,7 @@ function dropCard(name) {
   card.alive = false;
   if (card.drawn && window.Plotly) Plotly.purge(card.plot);
   if (window.Plotly) {
-    for (const el of card.el.querySelectorAll('.compare-grid .plot')) Plotly.purge(el);
+    for (const el of card.el.querySelectorAll('.compare-scroll .plot')) Plotly.purge(el);
   }
   card.el.remove();
   state.cards.delete(name);
@@ -333,10 +337,6 @@ function loadCard(card) {
 function figureOf(card) {
   const d = card.data;
   if (d.kind === 'standard') return d.figure;
-  // The upper panel of a COSMIC comparison is drawn through this exact same
-  // single-figure path as any other SBS96 plot; only the lower panel (the
-  // 5 match mini-plots, drawCompareMatches() below) needs anything extra.
-  if (d.kind === 'sbs96_compare') return d.query;
   if (d.kind === 'sbs4608') return d.variants && d.variants[state.variant];
   return null;
 }
@@ -367,34 +367,54 @@ function draw(card) {
 
 function drawCompareMatches(card) {
   const compareEl = card.el.querySelector('.compare');
-  const grid = compareEl.querySelector('.compare-grid');
-  // Purge before rebuilding either way: cheap (at most 5 small plots, and
-  // only ever reachable with exactly one sample selected), and avoids
+  const scrollEl = compareEl.querySelector('.compare-scroll');
+  // Purge before rebuilding either way: cheap (at most 5 full-size plots,
+  // and only ever reachable with exactly one sample selected), and avoids
   // tracking per-match Plotly state across redraws (unit change, a
   // different COSMIC build, or leaving compare mode entirely).
-  for (const el of grid.querySelectorAll('.plot')) {
+  for (const el of scrollEl.querySelectorAll('.plot')) {
     if (window.Plotly) Plotly.purge(el);
   }
-  if (card.data.kind !== 'sbs96_compare') {
+  const compare = card.data.cosmic_compare;
+  if (!compare) {
     compareEl.classList.add('hidden');
-    grid.replaceChildren();
+    scrollEl.replaceChildren();
     return;
   }
   compareEl.classList.remove('hidden');
   const frag = document.createDocumentFragment();
   const toRender = [];
-  for (const match of card.data.matches) {
+  for (const match of compare.matches) {
     const el = $('compareMatchTemplate').content.firstElementChild.cloneNode(true);
     const plotEl = el.querySelector('.plot');
     plotEl.setAttribute('aria-label', `${match.name}, cosine similarity ${match.score.toFixed(3)}`);
     frag.append(el);
     toRender.push({ plotEl, figure: match.figure });
   }
-  grid.replaceChildren(frag);
+  scrollEl.replaceChildren(frag);
   for (const { plotEl, figure } of toRender) {
     const { traces, layout, config } = structuredClone(figure);
     Plotly.newPlot(plotEl, traces, layout, config);
   }
+  setupCompareNav(compareEl, scrollEl, compare.matches.length);
+}
+
+// One match panel is visible at a time (full width, scroll-snapped); the
+// prev/next buttons and the "N of 5" readout stay in sync with whichever
+// one a scroll (trackpad, wheel, or the buttons themselves) brings to rest.
+function setupCompareNav(compareEl, scrollEl, count) {
+  const positionEl = compareEl.querySelector('.compare-position');
+  const updatePosition = () => {
+    const width = Math.max(scrollEl.clientWidth, 1);
+    const index = Math.min(Math.round(scrollEl.scrollLeft / width), count - 1);
+    positionEl.textContent = count ? `${index + 1} of ${count}` : '';
+  };
+  scrollEl.onscroll = updatePosition;
+  compareEl.querySelector('.compare-prev').onclick = () =>
+    scrollEl.scrollBy({ left: -scrollEl.clientWidth, behavior: 'smooth' });
+  compareEl.querySelector('.compare-next').onclick = () =>
+    scrollEl.scrollBy({ left: scrollEl.clientWidth, behavior: 'smooth' });
+  updatePosition();
 }
 
 /* ------------------------------------------------- SBS4608 panels */

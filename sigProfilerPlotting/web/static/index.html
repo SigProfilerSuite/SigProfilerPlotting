@@ -98,8 +98,15 @@
     <p class="card-status hint">Loading</p>
     <div class="plot-scroll"><div class="plot"></div></div>
     <div class="compare hidden">
-      <p class="subhead">Most similar COSMIC signatures</p>
-      <div class="compare-grid"></div>
+      <div class="compare-header">
+        <p class="subhead">Most similar COSMIC signatures</p>
+        <div class="compare-nav">
+          <button class="compare-prev" type="button" aria-label="Previous signature">&lsaquo;</button>
+          <span class="compare-position" aria-live="polite"></span>
+          <button class="compare-next" type="button" aria-label="Next signature">&rsaquo;</button>
+        </div>
+      </div>
+      <div class="compare-scroll"></div>
     </div>
   </article>
 </template>

@@ -58,3 +58,23 @@ def test_load_build_caches_across_calls():
     first = cosmic._load_build("mm10")
     second = cosmic._load_build("mm10")
     assert first is second
+
+
+def test_collapse_to_sbs96_is_a_no_op_for_already_96_context_labels():
+    raw = {"A[C>A]A": 3.0, "C[C>G]T": 5.0}
+    assert cosmic.collapse_to_sbs96(raw) == raw
+
+
+def test_collapse_to_sbs96_strips_a_strand_tag():
+    raw = {"T:A[C>A]A": 4.0, "U:A[C>A]A": 2.0, "N:A[C>A]A": 1.0}
+    assert cosmic.collapse_to_sbs96(raw) == {"A[C>A]A": 7.0}
+
+
+def test_collapse_to_sbs96_sums_wider_pentanucleotide_flanks():
+    raw = {"AA[C>A]AA": 10.0, "CA[C>A]AA": 5.0, "AA[C>A]CC": 3.0}
+    assert cosmic.collapse_to_sbs96(raw) == {"A[C>A]A": 15.0, "A[C>A]C": 3.0}
+
+
+def test_collapse_to_sbs96_strips_strand_tag_and_pentanucleotide_flanks_together():
+    raw = {"T:AA[C>A]AA": 10.0, "U:CA[C>A]AA": 5.0, "N:AA[C>A]CC": 3.0}
+    assert cosmic.collapse_to_sbs96(raw) == {"A[C>A]A": 15.0, "A[C>A]C": 3.0}

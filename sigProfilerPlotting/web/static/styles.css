@@ -215,15 +215,28 @@ select:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
 .card[data-state="ready"] .plot { min-height: 0; }
 
 .compare { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
-.compare-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
+.compare-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px;
 }
-.compare-match {
-  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+.compare-nav { display: flex; align-items: center; gap: 6px; }
+.compare-nav button { padding: 2px 10px; font-size: 17px; line-height: 1.4; }
+.compare-position {
+  min-width: 56px; text-align: center;
+  color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
 }
-.compare-match .plot { min-height: 300px; }
+
+/* One full-size match plot visible at a time; scroll (or the prev/next
+   buttons) snaps to the next one, the same size as the sample plot above
+   it rather than a grid of thumbnails. */
+.compare-scroll {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.compare-match { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; }
+.compare-match .plot { min-height: 560px; }
 
 .more {
   display: flex; align-items: center; justify-content: center; gap: 12px;

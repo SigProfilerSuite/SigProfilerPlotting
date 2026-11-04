@@ -17,11 +17,36 @@ from __future__ import annotations
 import csv
 import math
 import os
+import re
 from pathlib import Path
 
 from .matrix import MatrixError
 
 _ROOT = Path(os.path.dirname(os.path.abspath(__file__))) / "cosmic_signatures"
+
+# Matches the single base immediately adjacent to the mutated base on each
+# side of a "[C>A]"-style substitution, regardless of what precedes or
+# follows it in the full label -- e.g. SBS96's own "A[C>A]A", SBS288's
+# "T:A[C>A]A" (a strand tag prefix), SBS1536's "AA[C>A]AA" (wider
+# pentanucleotide flanks), and SBS4608's "T:AA[C>A]AA" (both) all search to
+# the same "A[C>A]A" trinucleotide context.
+_INNER_TRINUCLEOTIDE_RE = re.compile(r"([ACGT])\[([ACGT]>[ACGT])\]([ACGT])")
+
+
+def collapse_to_sbs96(raw_by_label: dict[str, float]) -> dict[str, float]:
+    """Sum an arbitrary SBS-context {label: value} mapping down to the 96
+    trinucleotide contexts COSMIC's own catalogue is expressed in. A no-op
+    (aside from reshaping) for a matrix that is already SBS96.
+    """
+    collapsed: dict[str, float] = {}
+    for label, value in raw_by_label.items():
+        match = _INNER_TRINUCLEOTIDE_RE.search(label)
+        if match is None:
+            continue
+        left, substitution, right = match.groups()
+        key = f"{left}[{substitution}]{right}"
+        collapsed[key] = collapsed.get(key, 0.0) + value
+    return collapsed
 
 # The genome build each bundled file covers -- the dashboard offers these as
 # the "version" of COSMIC signatures to compare against. All are COSMIC
