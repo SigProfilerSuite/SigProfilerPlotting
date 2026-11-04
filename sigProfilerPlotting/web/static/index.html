@@ -37,16 +37,18 @@
     </section>
 
     <section class="panel hidden" id="variantPanel">
-      <h2>SBS4608 view</h2>
-      <p class="subhead">Top panel</p>
-      <div class="segmented three" role="radiogroup" aria-label="SBS4608 top panel">
-        <label><input type="radio" name="variant" value="default" checked><span>Default</span></label>
-        <label><input type="radio" name="variant" value="strand_bias"><span>Strand bias</span></label>
-        <label><input type="radio" name="variant" value="genic_bias"><span>Genic bias</span></label>
+      <h2 id="variantPanelTitle">SBS4608 view</h2>
+      <div id="topPanelGroup">
+        <p class="subhead">Top panel</p>
+        <div class="segmented three" role="radiogroup" aria-label="Top panel">
+          <label><input type="radio" name="variant" value="default" checked><span>Default</span></label>
+          <label><input type="radio" name="variant" value="strand_bias"><span>Strand bias</span></label>
+          <label><input type="radio" name="variant" value="genic_bias"><span>Genic bias</span></label>
+        </div>
       </div>
       <fieldset class="checks">
         <legend class="subhead">Show</legend>
-        <label><input type="checkbox" id="opt-bias" name="section" value="transcription_bias" checked> Transcription bias</label>
+        <label id="biasCheckboxRow"><input type="checkbox" id="opt-bias" name="section" value="transcription_bias" checked> Transcription bias</label>
         <label><input type="checkbox" id="opt-total" name="section" value="total_heatmap" checked> 5-base context (total heatmap)</label>
         <label><input type="checkbox" id="opt-detailed" name="section" value="detailed_heatmaps" checked> Detailed heatmaps (front/back)</label>
       </fieldset>

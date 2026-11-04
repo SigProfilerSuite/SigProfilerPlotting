@@ -207,7 +207,7 @@ def test_scrolling_to_the_end_fetches_the_next_page(tmp_path):
         assert page.is_hidden("#more")
 
 
-@pytest.mark.parametrize("context", ["ID28", "DBS1248", "SBS1536"])
+@pytest.mark.parametrize("context", ["ID28", "DBS1248", "SBS384"])
 def test_contexts_without_a_dedicated_renderer_still_draw(tmp_path, context):
     path = _write_matrix(tmp_path / f"{context}.txt", context, ["A", "B"])
     with _dashboard() as page:
@@ -381,6 +381,39 @@ def test_sbs4608_unit_toggle_changes_the_plot(tmp_path):
                 "want => { const gd = document.querySelectorAll('.card .js-plotly-plot')[0];"
                 " return gd.layout.yaxis.title.text === want; }",
                 arg=titles[unit])
+
+
+def test_sbs1536_has_no_variant_or_transcription_bias_controls(tmp_path):
+    sbs1536_path = _write_matrix(tmp_path / "sbs1536.txt", "SBS1536", ["S0"], low=1, high=20)
+    sbs4608_path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", ["S0"], low=1, high=20)
+    with _dashboard() as page:
+        _upload(page, sbs1536_path, "SBS1536", 1)
+        assert page.is_visible("#variantPanel")
+        assert page.is_visible("#unitPanel")
+        assert page.is_hidden("#topPanelGroup")
+        assert page.is_hidden("#biasCheckboxRow")
+        assert page.is_visible("#opt-total")
+        assert page.is_visible("#opt-detailed")
+
+        plot = _plot(page)
+        shape = "gd => gd.data.map(t => [t.type, t.yaxis || 'y'])"
+        before = plot.evaluate(shape)
+        assert ["bar", "y"] in before
+        assert ["heatmap", "y4"] in before
+
+        page.uncheck("#opt-detailed", force=True)
+        page.wait_for_function(
+            "() => { const gd = document.querySelectorAll('.card .js-plotly-plot')[0];"
+            " return !gd.data.some(t => (t.yaxis === 'y2' || t.yaxis === 'y3') && t.visible !== false); }"
+        )
+
+        # Switching to an SBS4608 matrix afterward must restore the controls
+        # this context hides -- nothing should carry over as stale state.
+        _upload(page, sbs4608_path, "SBS4608", 1)
+        assert page.is_visible("#topPanelGroup")
+        assert page.is_visible("#biasCheckboxRow")
+        assert page.is_checked("#opt-bias")
+        assert page.is_checked('input[name="variant"][value="default"]')
 
 
 def test_sbs4608_switches_the_whole_figure(tmp_path):

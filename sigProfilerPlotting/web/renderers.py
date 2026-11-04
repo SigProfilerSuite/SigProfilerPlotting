@@ -316,6 +316,50 @@ def _scale_sbs4608_unit(built: dict, total: float, unit: str) -> None:
             yaxis["range"] = [v * factor for v in yaxis["range"]]
 
 
+def _reclaim_bottom_band(built: dict, band_hi: float):
+    """Permanently remap every paper-fraction position out of a [0, band_hi]
+    band, the same way the client's compactPlot() remaps a toggled-off
+    section -- for a section that is never built at all (no checkbox to
+    toggle it back on), the remap only ever needs to happen once, here,
+    rather than shipping an always-empty section for the client to reclaim.
+
+    Returns the same `map_y` used internally, so callers can also remap any
+    of SBS4608PlotConfig's own (pre-reclaim, now-stale) domain fractions --
+    e.g. the paper_band boundaries of sections that remain real and
+    toggleable, like SBS1536's total/detailed heatmaps.
+    """
+    remaining = 1.0 - band_hi
+
+    def map_y(y):
+        return (y - min(y, band_hi)) / remaining
+
+    layout = built["layout"]
+    for key, axis in layout.items():
+        if re.fullmatch(r"yaxis\d*", key) and isinstance(axis, dict) and "domain" in axis:
+            axis["domain"] = [map_y(v) for v in axis["domain"]]
+    for annotation in layout.get("annotations", []):
+        if annotation.get("yref") == "paper":
+            annotation["y"] = map_y(annotation["y"])
+    for shape in layout.get("shapes", []):
+        if shape.get("yref") == "paper":
+            shape["y0"] = map_y(shape["y0"])
+            shape["y1"] = map_y(shape["y1"])
+    for trace in built["traces"]:
+        colorbar = trace.get("colorbar")
+        if colorbar:
+            if "y" in colorbar:
+                colorbar["y"] = map_y(colorbar["y"])
+            if "len" in colorbar and colorbar.get("lenmode") != "pixels":
+                colorbar["len"] = colorbar["len"] / remaining
+    legend = layout.get("legend")
+    if legend and "y" in legend:
+        legend["y"] = map_y(legend["y"])
+    margin = layout.get("margin") or {}
+    vertical_margins = margin.get("t", 100) + margin.get("b", 80)
+    layout["height"] = round(vertical_margins + (layout["height"] - vertical_margins) * remaining)
+    return map_y
+
+
 def _sbs4608(matrix: MatrixData, sample: str, unit: str) -> dict:
     from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
     from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
@@ -338,12 +382,111 @@ def _sbs4608(matrix: MatrixData, sample: str, unit: str) -> dict:
     return {"kind": "sbs4608", "variants": variants}
 
 
+def _sbs1536(matrix: MatrixData, sample: str, unit: str) -> dict:
+    # SBS1536's 1536 pentanucleotide contexts are exactly what SBS4608Data
+    # collapses its strand-tagged rows down to once strand is summed away --
+    # so tag every row with one fixed, made-up strand ("T:") and SBS4608Data's
+    # own strand-sum becomes a no-op (nothing else to sum over), letting
+    # SBS4608PlotBuilder's bar chart / total heatmap / front+back detailed
+    # heatmaps run completely unmodified on real SBS1536 data.
+    #
+    # What's genuinely different -- there is no real strand/transcription
+    # data for this context -- is handled explicitly below: the
+    # transcription-bias traces are never built (only the fabricated T tag
+    # exists, so a real Transcribed/Untranscribed/Genic/Intergenic split
+    # would be meaningless), and the total heatmap's hover text has its
+    # (equally fabricated) T/U/N breakdown stripped.
+    from sigProfilerPlotting.sbs4608.annotation_builder import AnnotationBuilder
+    from sigProfilerPlotting.sbs4608.layout_builder import LayoutBuilder
+    from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
+    from sigProfilerPlotting.sbs4608.tick_label_formatter import TickLabelFormatter
+    from sigProfilerPlotting.sbs4608.trace_formatter import TraceFormatter
+
+    raw = matrix.raw4608(sample)
+    total = sum(float(row["contribution"]) for row in raw)
+    fake_raw4608 = [
+        {"mutationType": f"T:{row['mutationType']}", "contribution": row["contribution"]}
+        for row in raw
+    ]
+    data = SBS4608Data(fake_raw4608, sample, "default")
+    config = SBS4608PlotConfig(include_detailed_heatmaps=True, main_plot_type="default")
+    builder = SBS4608PlotBuilder(data, config)
+
+    traces = builder._build_main_plot_traces()
+    heatmap_start = len(traces)
+    total_traces = builder.heatmap_builder.build_total_heatmap(
+        data.group_by_outer_with_tun_proportions(), data.get_total_mutations()
+    )
+    for trace in total_traces:
+        trace["hovertemplate"] = "%{customdata.context}: %{z}<extra></extra>"
+    traces.extend(total_traces)
+    total_heatmap_range = [heatmap_start, len(traces)]
+
+    detailed_start = len(traces)
+    traces.extend(builder._build_detailed_heatmap_traces())
+    detailed_heatmaps_range = [detailed_start, len(traces)]
+
+    TraceFormatter.apply_percentage_formatting(traces)
+    TraceFormatter.configure_heatmap_colorbar(traces, config.should_include_detailed_heatmaps())
+
+    bar_data = data.get_96_bar_chart_data()
+    annotations = builder._build_annotations(bar_data)
+    shapes = builder._build_shapes(bar_data)
+    layout = builder.layout_builder.build_base_layout(
+        bar_data["flatSorted"], bar_data["maxValue"], annotations, shapes
+    )
+    builder._configure_axes(layout, None)
+    layout["barmode"] = "group"
+    layout["plot_bgcolor"] = "white"
+    layout["paper_bgcolor"] = "white"
+    layout["height"] = config.plot_height
+    layout["width"] = config.plot_width
+    LayoutBuilder.apply_percentage_layout_modifications(
+        layout, include_strand_bias=False,
+        include_detailed_heatmaps=config.should_include_detailed_heatmaps(),
+    )
+    TickLabelFormatter.apply_to_layout(layout, data.get_96_data(), config.get_colors())
+    layout["annotations"] = AnnotationBuilder.remove_detailed_trinucleotide_labels(layout["annotations"])
+    AnnotationBuilder.add_missing_ca_label(layout["annotations"])
+
+    built = {
+        "traces": traces,
+        "layout": layout,
+        "config": {"responsive": True, "displayModeBar": True, "displaylogo": False},
+        "sections": {
+            "total_heatmap": {"trace_range": total_heatmap_range},
+            "detailed_heatmaps": {"trace_range": detailed_heatmaps_range},
+            "transcription_bias": {"trace_range": [len(traces), len(traces)], "annotation_indices": []},
+        },
+        "main_plot_type": "default",
+    }
+    # There is no transcription-bias panel for SBS1536 at all -- reclaim the
+    # paper-fraction band SBS4608PlotConfig always reserves for it, instead
+    # of shipping an always-empty, never-toggleable section that just leaves
+    # blank space at the bottom of every plot.
+    map_y = _reclaim_bottom_band(built, 0.19)
+    _scale_sbs4608_unit(built, total, unit)
+    # SBS4608PlotConfig's own domain fractions are the pre-reclaim ones;
+    # remap them through the same transform so the remaining two sections'
+    # paper_band stays consistent with where compactPlot() will find them.
+    total_top = config.total_heatmap_domain[1]
+    built["sections"]["total_heatmap"]["paper_band"] = [map_y(0.19), map_y(total_top)]
+    built["sections"]["detailed_heatmaps"]["paper_band"] = [
+        map_y(total_top), map_y(config.main_plot_domain[0])
+    ]
+    return {"kind": "sbs4608", "variants": {"default": built}}
+
+
 def render_sample(matrix: MatrixData, sample: str, unit: str = "counts") -> dict:
     """Render one sample/signature as JSON accepted by Plotly.newPlot."""
     if unit not in ("counts", "percent", "proportion"):
         raise MatrixError("unit must be 'counts', 'percent', or 'proportion'")
     if matrix.context == "SBS4608":
         return _sbs4608(matrix, sample, unit)
+    if matrix.context == "SBS1536":
+        return _sbs1536(matrix, sample, unit)
     if matrix.context == "SBS96":
         # Bypasses the generic _unit()/_grouped() path entirely: SBS96 gets
         # its own classic SigProfilerPlotting layout (header bands, colored
