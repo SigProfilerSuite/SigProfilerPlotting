@@ -171,7 +171,7 @@ def test_interactive_options_compact_and_restore_subplot_layout(
         const expectedMainPixels = (variant.layout.height - 180) * (variant.layout.yaxis.domain[1] - variant.layout.yaxis.domain[0]);
         const actualMainPixels = (result.layout.height - 180) * (result.layout.yaxis.domain[1] - result.layout.yaxis.domain[0]);
         assert.ok(Math.abs(expectedMainPixels - actualMainPixels) < 1);
-        if (bits === 0) assert.ok(result.layout.height < 600);
+        if (bits === 0) assert.ok(result.layout.height < variant.layout.height * 0.75);
         if (!options.transcription_bias && variant.main_plot_type !== 'default') {
           assert.equal(result.layout.legend.orientation, 'h');
           assert.equal(result.layout.legend.x, 0.5);

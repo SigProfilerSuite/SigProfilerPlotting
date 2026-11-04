@@ -428,12 +428,6 @@ def test_sbs4608_panels_are_packed_exactly_as_plot_interactive_packs_them(tmp_pa
                     assert got == want, (variant, toggles)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "plotInteractive's compactPlot, ported unchanged, keeps a footer for the "
-    "strand/genic legend as a fixed share of the figure. Once all three panels "
-    "are hidden the figure is ~500 px tall, the footer is smaller than the "
-    "legend, and the legend covers the x labels and the foot of the bars. The "
-    "HTML export from plotInteractive does the same."))
 def test_hiding_every_panel_keeps_the_strand_legend_clear_of_the_plot(tmp_path):
     with _dashboard() as page:
         variants = _sbs4608_page(page, tmp_path)

@@ -292,16 +292,28 @@ function compactPlot(variant, toggles) {
       layout.annotations[index].visible = on;
     });
   }
+  const margin = layout.margin || {};
+  const verticalMargins = (margin.t === undefined ? 100 : margin.t) +
+    (margin.b === undefined ? 80 : margin.b);
+  const originalPlotPixels = layout.height - verticalMargins;
   const detailedRange = variant.sections.detailed_heatmaps.trace_range;
   const anyHeatmap = toggles.total_heatmap ||
     (toggles.detailed_heatmaps && detailedRange[1] > detailedRange[0]);
   const needsMainLegend = !toggles.transcription_bias &&
     variant.main_plot_type !== 'default';
   if (needsMainLegend) {
-    // Preserve a compact footer for the strand/genic legend. Without it the
-    // original bottom-right legend overlaps any heatmap that moves downward.
+    // Reserve a footer sized in PIXELS (legend height + the x-axis tick-label
+    // gutter below the bars), not a fixed paper fraction -- a fixed fraction
+    // (e.g. 0.055) is only big enough at the full figure height; once enough
+    // other panels are hidden and the figure shrinks, that same fraction is
+    // too few pixels and the legend rides up over the tick labels.
+    const legendPixels = 50;
+    const labelGutterPixels = 40;
     const biasBand = removed.find(band => band[0] === 0);
-    if (biasBand) biasBand[0] = 0.055;
+    if (biasBand) {
+      const footerFraction = (legendPixels + labelGutterPixels) / originalPlotPixels;
+      biasBand[0] = Math.min(biasBand[1], footerFraction);
+    }
     layout.legend = {
       ...(layout.legend || {}),
       orientation: 'h',
@@ -343,9 +355,6 @@ function compactPlot(variant, toggles) {
   });
   if (layout.legend && layout.legend.y !== undefined)
     layout.legend.y = mapY(layout.legend.y);
-  const margin = layout.margin || {};
-  const verticalMargins = (margin.t === undefined ? 100 : margin.t) +
-    (margin.b === undefined ? 80 : margin.b);
   layout.height = Math.round(verticalMargins + (layout.height - verticalMargins) * remaining);
   return {traces, layout};
 }
