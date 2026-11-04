@@ -201,6 +201,81 @@ def test_sbs4608_renderer_builds_three_variants():
         assert "layout" in variant
 
 
+def _uniform_sbs4608_matrix(value=1.0):
+    labels = []
+    for strand in "TUN":
+        for sub in ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]:
+            for left in [a + b for a in "ACGT" for b in "ACGT"]:
+                for right in [a + b for a in "ACGT" for b in "ACGT"]:
+                    labels.append(f"{strand}:{left}[{sub}]{right}")
+    matrix = MatrixData(
+        context="SBS4608",
+        labels=tuple(labels),
+        columns=("S1",),
+        values=tuple((value,) for _ in labels),
+    )
+    return matrix, float(len(labels)) * value
+
+
+def _main_bar_sum(built):
+    return sum(
+        v
+        for t in built["traces"]
+        if t.get("type") == "bar" and t.get("yaxis") in (None, "y")
+        for v in t["y"]
+    )
+
+
+def _total_heatmap_z_sum(built):
+    return sum(
+        cell
+        for t in built["traces"]
+        if t.get("type") == "heatmap" and t.get("yaxis") == "y4"
+        for row in t["z"]
+        for cell in row
+    )
+
+
+# The main plot's own bar sum only covers everything for "default" and
+# "genic_bias" (Genic + Intergenic = T + U + N = every row); "strand_bias"
+# plots only the T and U bars, so it covers 2/3 of a uniform matrix's total.
+MAIN_BAR_FRACTION = {"default": 1.0, "strand_bias": 2.0 / 3.0, "genic_bias": 1.0}
+
+
+@pytest.mark.parametrize("variant", ["default", "strand_bias", "genic_bias"])
+def test_sbs4608_counts_unit_recovers_raw_totals(variant):
+    # Every row contributes the same raw count, so the bar chart / total
+    # heatmap -- a full partition of all 4608 rows either way -- must sum
+    # back to that exact total once "counts" undoes the percent-of-total
+    # SBS4608Data/SBS4608PlotBuilder always normalize to internally.
+    matrix, total = _uniform_sbs4608_matrix()
+    built = render_sample(matrix, "S1", unit="counts")["variants"][variant]
+    assert _main_bar_sum(built) == pytest.approx(total * MAIN_BAR_FRACTION[variant])
+    assert _total_heatmap_z_sum(built) == pytest.approx(total)
+    yaxis = built["layout"]["yaxis"]
+    assert yaxis["title"]["text"] == "Number of Single Base Substitutions"
+    assert "ticksuffix" not in yaxis
+
+
+@pytest.mark.parametrize("variant", ["default", "strand_bias", "genic_bias"])
+def test_sbs4608_proportion_unit_sums_to_one(variant):
+    matrix, _total = _uniform_sbs4608_matrix()
+    built = render_sample(matrix, "S1", unit="proportion")["variants"][variant]
+    assert _main_bar_sum(built) == pytest.approx(MAIN_BAR_FRACTION[variant])
+    assert _total_heatmap_z_sum(built) == pytest.approx(1.0)
+    yaxis = built["layout"]["yaxis"]
+    assert yaxis["title"]["text"] == "Proportion of Single Base Substitutions"
+    assert "ticksuffix" not in yaxis
+
+
+def test_sbs4608_percent_unit_is_unchanged_by_the_new_scaling_path():
+    matrix, _total = _uniform_sbs4608_matrix()
+    built = render_sample(matrix, "S1", unit="percent")["variants"]["default"]
+    assert _main_bar_sum(built) == pytest.approx(100.0)
+    assert built["layout"]["yaxis"]["title"]["text"] == "Percentage of Single Base Substitutions"
+    assert built["layout"]["yaxis"]["ticksuffix"] == "%"
+
+
 def test_layout_legend_does_not_collide_with_left_aligned_title(tmp_path):
     path = _write(tmp_path / "sbs6.tsv", SBS6_LABELS)
     matrix = load_matrix(path)

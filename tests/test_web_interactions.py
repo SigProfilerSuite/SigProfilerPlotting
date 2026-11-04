@@ -263,6 +263,33 @@ def test_select_all_clear_all_and_search(tmp_path):
         assert page.text_content("#selectionCount") == "40 of 40 selected"
 
 
+def test_more_than_100_samples_defaults_to_just_the_first(tmp_path):
+    # A "select everything" default makes both the sidebar and the plot
+    # area unusable before the reader has looked at anything on a matrix
+    # with hundreds of columns -- past the threshold, start with only the
+    # first sample selected; the reader can still select/search for more.
+    names = [f"PD{i:04d}a" for i in range(101)]
+    path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", names)
+    with _dashboard() as page:
+        _upload(page, path, "SBS96", 1)
+        assert page.text_content("#selectionCount") == "1 of 101 selected"
+        assert page.locator(".card-title").all_text_contents() == [names[0]]
+        assert page.is_checked("#sampleList li:nth-child(1) input")
+        assert not page.is_checked("#sampleList li:nth-child(2) input")
+
+        # Still fully selectable/searchable from there.
+        page.click("#selectAll")
+        assert page.text_content("#selectionCount") == "101 of 101 selected"
+
+
+def test_exactly_100_samples_still_selects_everything(tmp_path):
+    names = [f"PD{i:04d}a" for i in range(100)]
+    path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", names)
+    with _dashboard() as page:
+        _upload(page, path, "SBS96", PAGE)
+        assert page.text_content("#selectionCount") == "100 of 100 selected"
+
+
 # ---------------------------------------------------- plot interactions
 
 def test_hovering_a_bar_shows_its_value(tmp_path):
@@ -336,6 +363,26 @@ def test_a_unit_redraws_each_sample_as_shares_of_its_total(tmp_path, context, un
             assert _plot(page, index).evaluate(total) == pytest.approx(whole)
 
 
+def test_sbs4608_unit_toggle_changes_the_plot(tmp_path):
+    path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", ["S0"], low=1, high=20)
+    titles = {
+        "counts": "Number of Single Base Substitutions",
+        "percent": "Percentage of Single Base Substitutions",
+        "proportion": "Proportion of Single Base Substitutions",
+    }
+    with _dashboard() as page:
+        _upload(page, path, "SBS4608", 1)
+        title = "gd => gd.layout.yaxis.title.text"
+        assert _plot(page).evaluate(title) == titles["counts"]  # the default unit
+
+        for unit in ("percent", "proportion", "counts"):
+            page.check(f'input[name="unit"][value="{unit}"]', force=True)
+            page.wait_for_function(
+                "want => { const gd = document.querySelectorAll('.card .js-plotly-plot')[0];"
+                " return gd.layout.yaxis.title.text === want; }",
+                arg=titles[unit])
+
+
 def test_sbs4608_switches_the_whole_figure(tmp_path):
     path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", [f"S{i}" for i in range(6)],
                          low=0, high=20)
@@ -344,8 +391,7 @@ def test_sbs4608_switches_the_whole_figure(tmp_path):
         _upload(page, path, "SBS4608", PAGE_4608)
         assert len(requests) == PAGE_4608
         assert page.is_visible("#variantPanel")
-        # Always drawn as a percentage, so no unit choice is offered.
-        assert page.is_hidden("#unitPanel")
+        assert page.is_visible("#unitPanel")
 
         served = page.evaluate(
             "() => fetch('/api/render?sample=S0&unit=counts').then(r => r.json())")
