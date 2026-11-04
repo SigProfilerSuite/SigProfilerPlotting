@@ -434,7 +434,7 @@ function loadMore() {
   // because both triggers landed within the same moment.
   const now = Date.now();
   if (now < loadMoreCooldownUntil) return;
-  loadMoreCooldownUntil = now + 400;
+  loadMoreCooldownUntil = now + 1000;
   state.limit += pageSize();
   sync();
 }
