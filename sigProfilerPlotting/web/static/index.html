@@ -36,6 +36,13 @@
       </div>
     </section>
 
+    <section class="panel hidden" id="cosmicPanel">
+      <h2>Compare with COSMIC</h2>
+      <label><input type="checkbox" id="cosmicEnabled"> Compare with COSMIC signatures</label>
+      <select id="cosmicBuild" disabled aria-label="COSMIC genome build"></select>
+      <p id="cosmicHint" class="hint">Select exactly one sample or signature to compare it.</p>
+    </section>
+
     <section class="panel hidden" id="variantPanel">
       <h2 id="variantPanelTitle">SBS4608 view</h2>
       <div id="topPanelGroup">
@@ -90,7 +97,14 @@
     <h3 class="card-title"></h3>
     <p class="card-status hint">Loading</p>
     <div class="plot-scroll"><div class="plot"></div></div>
+    <div class="compare hidden">
+      <p class="subhead">Most similar COSMIC signatures</p>
+      <div class="compare-grid"></div>
+    </div>
   </article>
+</template>
+<template id="compareMatchTemplate">
+  <div class="compare-match"><div class="plot"></div></div>
 </template>
 </body>
 </html>

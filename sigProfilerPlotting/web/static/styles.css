@@ -121,6 +121,15 @@ button, .file-button {
 button:hover:not(:disabled), .file-button:hover { border-color: var(--accent); }
 button:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
 
+select {
+  font: inherit;
+  width: 100%;
+  padding: 6px 10px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+select:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
+
 .file-button {
   display: block; text-align: center; font-weight: 600;
   color: var(--accent-ink); background: var(--accent); border-color: var(--accent);
@@ -204,6 +213,17 @@ button:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
 .plot-scroll { overflow-x: auto; }
 .plot { min-height: 520px; }
 .card[data-state="ready"] .plot { min-height: 0; }
+
+.compare { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.compare-match {
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.compare-match .plot { min-height: 300px; }
 
 .more {
   display: flex; align-items: center; justify-content: center; gap: 12px;

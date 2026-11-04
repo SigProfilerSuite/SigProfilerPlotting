@@ -448,6 +448,42 @@ def test_sbs1536_has_no_variant_or_transcription_bias_controls(tmp_path):
         assert page.is_checked('input[name="variant"][value="default"]')
 
 
+def test_cosmic_comparison_only_activates_for_one_selected_sbs96_sample(tmp_path):
+    sbs96_path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1", "Sample2"])
+    sbs4608_path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", ["S0"], low=1, high=20)
+    with _dashboard() as page:
+        _upload(page, sbs96_path, "SBS96", 2)
+        assert page.is_visible("#cosmicPanel")
+        # Two samples selected: the comparison is not meaningful yet.
+        assert page.is_disabled("#cosmicEnabled")
+
+        page.click("#clearAll")
+        page.click("#sampleList li:nth-child(1) input")
+        _wait_ready(page, 1)
+        assert not page.is_disabled("#cosmicEnabled")
+
+        page.check("#cosmicEnabled", force=True)
+        page.wait_for_function(
+            "() => document.querySelectorAll('.card .compare-match .js-plotly-plot').length === 5"
+        )
+        assert page.locator(".card .compare:not(.hidden)").count() == 1
+
+        # Selecting a second sample makes the comparison stop applying --
+        # the checkbox unchecks itself and the stale comparison is cleared
+        # from the already-rendered card rather than lingering.
+        page.click("#sampleList li:nth-child(2) input")
+        page.wait_for_function(
+            "() => document.querySelectorAll('.card .compare-match .js-plotly-plot').length === 0"
+        )
+        assert not page.is_checked("#cosmicEnabled")
+        assert page.is_disabled("#cosmicEnabled")
+        assert page.locator(".card .compare:not(.hidden)").count() == 0
+
+        # A non-SBS96 matrix never offers the comparison at all.
+        _upload(page, sbs4608_path, "SBS4608", 1)
+        assert page.is_hidden("#cosmicPanel")
+
+
 def test_sbs4608_switches_the_whole_figure(tmp_path):
     path = _write_matrix(tmp_path / "sbs4608.txt", "SBS4608", [f"S{i}" for i in range(6)],
                          low=0, high=20)

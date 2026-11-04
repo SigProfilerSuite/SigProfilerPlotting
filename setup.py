@@ -55,7 +55,7 @@ setup(
             "sigprofilerplotting-web=sigProfilerPlotting.web.launcher:main",
         ],
     },
-    package_data={"": ["fonts/*.ttf", "web/static/*"]},
+    package_data={"": ["fonts/*.ttf", "web/static/*", "web/cosmic_signatures/*.txt"]},
     include_package_data=True,
     zip_safe=False,
 )

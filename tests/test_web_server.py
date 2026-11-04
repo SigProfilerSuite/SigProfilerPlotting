@@ -10,6 +10,16 @@ from sigProfilerPlotting.web.server import make_server
 SBS6_LABELS = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
 
 
+def _sbs96_tsv():
+    from sigProfilerPlotting.web.matrix import REFERENCE_CONTEXTS
+
+    labels = REFERENCE_CONTEXTS["SBS96"]
+    lines = ["MutationType\tS1"]
+    for index, label in enumerate(labels):
+        lines.append(f"{label}\t{index + 1}")
+    return "\n".join(lines) + "\n"
+
+
 @pytest.fixture
 def running_server():
     server = make_server("127.0.0.1", 0)
@@ -254,3 +264,60 @@ def test_quit_button_shuts_down_the_running_server():
         assert not thread.is_alive(), "serve_forever() should have returned after /api/shutdown"
     finally:
         server.server_close()
+
+
+def test_cosmic_builds_endpoint_lists_bundled_genome_builds(running_server):
+    conn = _connection(running_server)
+    conn.request("GET", "/api/cosmic/builds")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    body = json.loads(resp.read())
+    assert body["builds"] == ["GRCh37", "GRCh38", "mm9", "mm10", "mm39", "rn6", "rn7"]
+    conn.close()
+
+
+def test_render_with_compare_cosmic_returns_the_comparison_payload(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _multipart_body("matrix.tsv", _sbs96_tsv())
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST", "/api/matrix", body=body,
+        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    resp.read()
+    conn.close()
+
+    conn = _connection(running_server)
+    conn.request("GET", "/api/render?sample=S1&unit=counts&compare_cosmic=GRCh37")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    figure = json.loads(resp.read())
+    assert figure["kind"] == "sbs96_compare"
+    assert figure["build"] == "GRCh37"
+    assert len(figure["matches"]) == 5
+    conn.close()
+
+
+def test_render_with_an_unknown_cosmic_build_is_rejected(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _multipart_body("matrix.tsv", _sbs96_tsv())
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST", "/api/matrix", body=body,
+        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+    )
+    resp = conn.getresponse()
+    resp.read()
+    conn.close()
+
+    conn = _connection(running_server)
+    conn.request("GET", "/api/render?sample=S1&compare_cosmic=not-a-real-build")
+    resp = conn.getresponse()
+    assert resp.status == 400
+    conn.close()

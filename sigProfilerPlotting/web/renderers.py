@@ -96,14 +96,20 @@ def _sbs96_tick_text(label: str, color: str) -> str:
     )
 
 
-def _sbs96(matrix: MatrixData, sample: str, unit: str) -> dict:
+def _sbs96_figure(
+    raw_by_label: dict, title: str, unit: str, height: int = 560, title_font_size: int = 18
+) -> dict:
     """The classic SigProfilerPlotting SBS96 look: six colored mutation-type
     header bands in place of a legend, trinucleotide-only x labels colored
-    per group, and a bold sample title -- matching the static plotSBS "96"
-    layout (sigProfilerPlotting.py's make_pickle_file/plotSBS) rather than
-    the generic grouped-bar-with-legend style used for other contexts.
+    per group, and a bold title -- matching the static plotSBS "96" layout
+    (sigProfilerPlotting.py's make_pickle_file/plotSBS) rather than the
+    generic grouped-bar-with-legend style used for other contexts.
+
+    Takes a plain {96-context label: value} mapping rather than a
+    MatrixData/sample pair so it can draw any SBS96-shaped vector -- a
+    dashboard sample/signature, or (smaller, for the COSMIC comparison
+    panels) a reference signature -- through the same code path.
     """
-    raw_by_label = dict(zip(matrix.labels, matrix.sample_values(sample)))
     raw = [raw_by_label[label] for label in SBS96_DISPLAY_ORDER]
     total = sum(raw)
     if unit == "counts":
@@ -131,6 +137,23 @@ def _sbs96(matrix: MatrixData, sample: str, unit: str) -> dict:
 
     n = len(SBS96_DISPLAY_ORDER)
     per_group = n // len(SBS96_SUBSTITUTIONS)  # 16
+    margin_top, margin_bottom = 100, 70
+    # yref="paper" fractions above 1.0 (or below 1.0, for the title) scale
+    # with the AXES height, not with the figure's total height -- fixed
+    # fractions tuned for the default 560px figure (390px of axes) put the
+    # header bands and title comfortably apart there, but at a much shorter
+    # figure (the COSMIC comparison panels, ~300px) the same fractions
+    # resolve to far fewer pixels while the text stays the same size,
+    # visually overlapping. Anchor these to fixed pixel offsets instead, so
+    # the spacing is identical regardless of `height`.
+    axes_height = max(height - margin_top - margin_bottom, 1)
+
+    def above_axes(pixels):
+        return 1 + pixels / axes_height
+
+    def inside_axes(pixels):
+        return 1 - pixels / axes_height
+
     shapes = []
     annotations = []
     for index, substitution in enumerate(SBS96_SUBSTITUTIONS):
@@ -138,26 +161,26 @@ def _sbs96(matrix: MatrixData, sample: str, unit: str) -> dict:
         color = SBS_COLORS[substitution]
         shapes.append({
             "type": "rect", "xref": "x", "yref": "paper",
-            "x0": x0, "x1": x1, "y0": 1.03, "y1": 1.1,
+            "x0": x0, "x1": x1, "y0": above_axes(12), "y1": above_axes(39),
             "fillcolor": color, "line": {"width": 0},
         })
         annotations.append({
-            "xref": "x", "yref": "paper", "x": (x0 + x1) / 2, "y": 1.17,
+            "xref": "x", "yref": "paper", "x": (x0 + x1) / 2, "y": above_axes(66),
             "text": f"<b>{substitution}</b>", "showarrow": False,
             "font": {"family": "Arial, sans-serif", "size": 15, "color": "#000000"},
         })
     annotations.append({
         # Inside the plotting area (below the header bands at paper y>1),
         # near its top-left -- not at y=1 exactly, which the bands' own
-        # shapes (y0=1.03) would otherwise clip into.
-        "xref": "paper", "yref": "paper", "x": 0.01, "y": 0.96, "yanchor": "top",
-        "xanchor": "left", "text": f"<b>{sample}</b>", "showarrow": False,
-        "font": {"family": "Arial, sans-serif", "size": 18, "color": "#000000"},
+        # shapes would otherwise clip into.
+        "xref": "paper", "yref": "paper", "x": 0.01, "y": inside_axes(16), "yanchor": "top",
+        "xanchor": "left", "text": f"<b>{title}</b>", "showarrow": False,
+        "font": {"family": "Arial, sans-serif", "size": title_font_size, "color": "#000000"},
     })
 
     layout = {
-        "height": 560,
-        "margin": {"l": 70, "r": 25, "t": 100, "b": 70},
+        "height": height,
+        "margin": {"l": 70, "r": 25, "t": margin_top, "b": margin_bottom},
         "paper_bgcolor": "#ffffff", "plot_bgcolor": "#ffffff",
         "showlegend": False,
         "shapes": shapes,
@@ -184,13 +207,18 @@ def _sbs96(matrix: MatrixData, sample: str, unit: str) -> dict:
         "type": "bar", "x": list(range(n)), "y": values,
         "marker": {"color": bar_colors},
         "customdata": SBS96_DISPLAY_ORDER,
-        "hovertemplate": f"%{{customdata}}<br>{sample}: %{{y}}<extra></extra>",
+        "hovertemplate": f"%{{customdata}}<br>{title}: %{{y}}<extra></extra>",
         "showlegend": False,
     }]
     return {
         "traces": traces, "layout": layout,
         "config": {"responsive": True, "displaylogo": False, "toImageButtonOptions": {"format": "svg"}},
     }
+
+
+def _sbs96(matrix: MatrixData, sample: str, unit: str) -> dict:
+    raw_by_label = dict(zip(matrix.labels, matrix.sample_values(sample)))
+    return _sbs96_figure(raw_by_label, sample, unit)
 
 
 def _sbs288(matrix, sample, values, ytitle, fmt):
@@ -479,7 +507,36 @@ def _sbs1536(matrix: MatrixData, sample: str, unit: str) -> dict:
     return {"kind": "sbs4608", "variants": {"default": built}}
 
 
-def render_sample(matrix: MatrixData, sample: str, unit: str = "counts") -> dict:
+def _cosmic_comparison(matrix: MatrixData, sample: str, unit: str, build: str) -> dict:
+    """Query (upper panel) + the 5 most cosine-similar COSMIC signatures
+    (lower panel), each drawn through the same classic SBS96 renderer as
+    the query so their shapes are directly, visually comparable.
+    """
+    from . import cosmic
+
+    raw_by_label = dict(zip(matrix.labels, matrix.sample_values(sample)))
+    query_figure = _sbs96_figure(raw_by_label, sample, unit)
+    matches = cosmic.top_matches(raw_by_label, build)
+    match_figures = [
+        {
+            "name": match["name"],
+            "score": match["score"],
+            "figure": _sbs96_figure(
+                match["values"],
+                f"{match['name']} (cos {match['score']:.3f})",
+                "proportion",
+                height=300,
+                title_font_size=13,
+            ),
+        }
+        for match in matches
+    ]
+    return {"kind": "sbs96_compare", "query": query_figure, "matches": match_figures, "build": build}
+
+
+def render_sample(
+    matrix: MatrixData, sample: str, unit: str = "counts", compare_cosmic: str | None = None
+) -> dict:
     """Render one sample/signature as JSON accepted by Plotly.newPlot."""
     if unit not in ("counts", "percent", "proportion"):
         raise MatrixError("unit must be 'counts', 'percent', or 'proportion'")
@@ -488,6 +545,8 @@ def render_sample(matrix: MatrixData, sample: str, unit: str = "counts") -> dict
     if matrix.context == "SBS1536":
         return _sbs1536(matrix, sample, unit)
     if matrix.context == "SBS96":
+        if compare_cosmic:
+            return _cosmic_comparison(matrix, sample, unit, compare_cosmic)
         # Bypasses the generic _unit()/_grouped() path entirely: SBS96 gets
         # its own classic SigProfilerPlotting layout (header bands, colored
         # trinucleotide ticks) rather than the shared legend-based style.

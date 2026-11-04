@@ -162,6 +162,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._serve_static(path[len("/static/"):])
             elif path == "/api/render":
                 self._serve_render(parse_qs(parsed.query))
+            elif path == "/api/cosmic/builds":
+                self._serve_cosmic_builds()
             else:
                 self._reject(HTTPStatus.NOT_FOUND, "Not found.")
         except BrokenPipeError:
@@ -206,15 +208,21 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
         sample = query.get("sample", [None])[0]
         unit = query.get("unit", ["counts"])[0]
+        compare_cosmic = query.get("compare_cosmic", [None])[0] or None
         if not sample:
             self._reject(HTTPStatus.BAD_REQUEST, "The 'sample' query parameter is required.")
             return
         try:
-            figure = render_sample(matrix, sample, unit)
+            figure = render_sample(matrix, sample, unit, compare_cosmic=compare_cosmic)
         except MatrixError as exc:
             self._reject(HTTPStatus.BAD_REQUEST, str(exc))
             return
         self._write_json(HTTPStatus.OK, figure)
+
+    def _serve_cosmic_builds(self) -> None:
+        from . import cosmic
+
+        self._write_json(HTTPStatus.OK, {"builds": cosmic.available_builds()})
 
     # -- POST ------------------------------------------------------------
     def do_POST(self) -> None:
