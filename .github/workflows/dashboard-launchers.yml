@@ -63,7 +63,7 @@ jobs:
           start /B cmd /C "launch_dashboard.bat --no-launch > first-run.log 2>&1"
           for /L %%i in (1,1,60) do (
             findstr /C:"dashboard running at" first-run.log >nul 2>nul && goto :first_up
-            timeout /T 2 >nul
+            ping -n 3 127.0.0.1 >nul
           )
           :first_up
           type first-run.log
@@ -76,7 +76,7 @@ jobs:
           start /B cmd /C "launch_dashboard.bat --no-launch > second-run.log 2>&1"
           for /L %%i in (1,1,60) do (
             findstr /C:"dashboard running at" second-run.log >nul 2>nul && goto :second_up
-            timeout /T 2 >nul
+            ping -n 3 127.0.0.1 >nul
           )
           :second_up
           type second-run.log
