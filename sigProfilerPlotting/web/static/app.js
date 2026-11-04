@@ -21,6 +21,8 @@ const state = {
   selected: new Set(),
   unit: 'counts',
   variant: 'default',
+  // SBS4608 panels shown, as in plotInteractive: all on to begin with.
+  toggles: { transcription_bias: true, total_heatmap: true, detailed_heatmaps: true },
   limit: 0,               // how many selected samples may be drawn
   cards: new Map(),       // sample name -> card
   generation: 0,          // bumped per matrix, so late answers are dropped
@@ -248,7 +250,10 @@ function draw(card) {
   }
   // A copy each time: Plotly writes into the objects it is given, and a
   // variant drawn again later must start from what the server sent.
-  const { traces, layout, config } = structuredClone(figure);
+  // compactPlot copies the traces and layout itself.
+  const { traces, layout, config } = card.data.kind === 'sbs4608'
+    ? { ...compactPlot(figure, state.toggles), config: structuredClone(figure.config) }
+    : structuredClone(figure);
   const plot = card.drawn ? Plotly.react : Plotly.newPlot;
   card.pending = card.pending
     .then(() => (card.alive ? plot(card.plot, traces, layout, config) : null))
@@ -258,6 +263,91 @@ function draw(card) {
       setStatus(card, '', null);
     })
     .catch((e) => setStatus(card, `This plot could not be drawn: ${e.message}`, 'error'));
+}
+
+/* ------------------------------------------------- SBS4608 panels */
+
+// Ported unchanged from plotInteractive's page (sbs4608_interactive.py), so
+// the dashboard hides and repacks panels exactly as that export does.
+const SECTION_AXES = {
+  total_heatmap: ['yaxis4'],
+  detailed_heatmaps: ['yaxis2', 'yaxis3'],
+  transcription_bias: ['yaxis5', 'yaxis6', 'xaxis2', 'xaxis3'],
+};
+
+function compactPlot(variant, toggles) {
+  // Start from immutable full-layout data so repeated toggles cannot drift.
+  const traces = JSON.parse(JSON.stringify(variant.traces));
+  const layout = JSON.parse(JSON.stringify(variant.layout));
+  const removed = [];
+  for (const [key, sec] of Object.entries(variant.sections)) {
+    const on = toggles[key];
+    const [start, end] = sec.trace_range;
+    if (!on && end > start) removed.push([...sec.paper_band]);
+    for (let i = start; i < end; i++) traces[i].visible = on;
+    SECTION_AXES[key].forEach(axis => {
+      if (layout[axis]) layout[axis].visible = on && end > start;
+    });
+    (sec.annotation_indices || []).forEach(index => {
+      layout.annotations[index].visible = on;
+    });
+  }
+  const detailedRange = variant.sections.detailed_heatmaps.trace_range;
+  const anyHeatmap = toggles.total_heatmap ||
+    (toggles.detailed_heatmaps && detailedRange[1] > detailedRange[0]);
+  const needsMainLegend = !toggles.transcription_bias &&
+    variant.main_plot_type !== 'default';
+  if (needsMainLegend) {
+    // Preserve a compact footer for the strand/genic legend. Without it the
+    // original bottom-right legend overlaps any heatmap that moves downward.
+    const biasBand = removed.find(band => band[0] === 0);
+    if (biasBand) biasBand[0] = 0.055;
+    layout.legend = {
+      ...(layout.legend || {}),
+      orientation: 'h',
+      x: 0.5,
+      xanchor: 'center',
+      y: 0.012,
+      yanchor: 'bottom',
+    };
+  } else if (!toggles.transcription_bias) {
+    layout.showlegend = false;
+  }
+  if (toggles.transcription_bias && !anyHeatmap && removed.length) {
+    // Keep a small label gutter, not a missing panel, below the main x labels.
+    const topBand = removed.reduce((a, b) => a[1] > b[1] ? a : b);
+    topBand[1] -= 0.04;
+  }
+  const remaining = 1 - removed.reduce((sum, band) => sum + band[1] - band[0], 0);
+  const mapY = y => (y - removed.reduce((sum, [lo, hi]) =>
+    sum + Math.max(0, Math.min(y, hi) - lo), 0)) / remaining;
+  for (const [key, axis] of Object.entries(layout)) {
+    if (!/^yaxis\d*$/.test(key) || !axis.domain) continue;
+    if (axis.visible === false) axis.domain = [0, 0.001];
+    else axis.domain = axis.domain.map(mapY);
+  }
+  (layout.annotations || []).forEach(annotation => {
+    if (annotation.yref === 'paper') annotation.y = mapY(annotation.y);
+  });
+  (layout.shapes || []).forEach(shape => {
+    if (shape.yref === 'paper') {
+      shape.y0 = mapY(shape.y0);
+      shape.y1 = mapY(shape.y1);
+    }
+  });
+  traces.forEach(trace => {
+    if (trace.visible === false || !trace.colorbar) return;
+    if (trace.colorbar.y !== undefined) trace.colorbar.y = mapY(trace.colorbar.y);
+    if (trace.colorbar.len !== undefined && trace.colorbar.lenmode !== 'pixels')
+      trace.colorbar.len /= remaining;
+  });
+  if (layout.legend && layout.legend.y !== undefined)
+    layout.legend.y = mapY(layout.legend.y);
+  const margin = layout.margin || {};
+  const verticalMargins = (margin.t === undefined ? 100 : margin.t) +
+    (margin.b === undefined ? 80 : margin.b);
+  layout.height = Math.round(verticalMargins + (layout.height - verticalMargins) * remaining);
+  return {traces, layout};
 }
 
 /* ------------------------------------------------------ what is drawn */
@@ -316,11 +406,20 @@ function onUnit(unit) {
   for (const card of state.cards.values()) loadCard(card);
 }
 
-function onVariant(variant) {
-  state.variant = variant;
+function redrawSbs4608() {
   for (const card of state.cards.values()) {
     if (card.data && card.data.kind === 'sbs4608') draw(card);
   }
+}
+
+function onVariant(variant) {
+  state.variant = variant;
+  redrawSbs4608();
+}
+
+function onToggle(section, on) {
+  state.toggles[section] = on;
+  redrawSbs4608();
 }
 
 function init() {
@@ -348,6 +447,8 @@ function init() {
     r.addEventListener('change', () => r.checked && onUnit(r.value)));
   document.querySelectorAll('input[name="variant"]').forEach((r) =>
     r.addEventListener('change', () => r.checked && onVariant(r.value)));
+  document.querySelectorAll('input[name="section"]').forEach((c) =>
+    c.addEventListener('change', () => onToggle(c.value, c.checked)));
 
   new IntersectionObserver((entries) => {
     state.sentinelVisible = entries.some((e) => e.isIntersecting);
