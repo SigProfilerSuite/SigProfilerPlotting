@@ -46,6 +46,34 @@ def _write_sbs4608_matrix(
     return path
 
 
+def test_heatmap_colorbar_does_not_double_scale_percentages(tmp_path):
+    # TraceFormatter.apply_percentage_formatting() already multiplies every
+    # heatmap z value by 100 (e.g. a fraction of 0.093 becomes 9.3, meaning
+    # "9.3%") before configure_heatmap_colorbar() runs. A colorbar
+    # tickformat of ".1%" would multiply by 100 *again* (9.3 -> "930%"),
+    # which is exactly the "weird" >100% values a user reported seeing.
+    from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
+
+    path = _write_sbs4608_matrix(tmp_path / "sbs4608.tsv")
+    raw = load_raw4608(str(path), "Sample")
+    config = SBS4608PlotConfig(include_detailed_heatmaps=True, main_plot_type="default")
+    built = SBS4608PlotBuilder(SBS4608Data(raw, "Sample", "default"), config).build()
+
+    heatmaps_with_colorbars = [
+        t for t in built["traces"] if t.get("type") == "heatmap" and t.get("showscale")
+    ]
+    assert heatmaps_with_colorbars, "expected at least one heatmap trace with a visible colorbar"
+    for trace in heatmaps_with_colorbars:
+        colorbar = trace["colorbar"]
+        assert colorbar["tickformat"] == ".1f", (
+            "a Plotly '%' tickformat (e.g. '.1%') would re-multiply by 100 on top of "
+            "apply_percentage_formatting()'s own *100 -- use a plain number format instead"
+        )
+        assert colorbar.get("ticksuffix") == "%"
+
+
 def test_plot_functions_are_public():
     assert plotting_package.plotInteractive is plotInteractive
     assert plotting_package.plotStatic is plotStatic
