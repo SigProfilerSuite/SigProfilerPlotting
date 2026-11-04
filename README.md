@@ -139,13 +139,37 @@ sP.samplePortrait(sample_matrices_path, output_path, project, percentage=False)
 ## Interactive Dashboard
 
 A local, browser-based dashboard lets you upload any supported matrix and
-explore it interactively (search, select samples, toggle counts/percentage,
-hover/zoom/pan/export) without writing any Python. From a cloned repository,
-run one of the one-click launchers in the repo root (`launch_dashboard.sh`,
-`launch_dashboard.command`, or `launch_dashboard.bat`); after `pip install`,
-run the installed `sigprofilerplotting-web` command instead. See
-[the dashboard docs](https://sigprofilersuite.github.io/SigProfilerPlotting/Plotting-Dashboard.html)
-for full usage, supported contexts, and troubleshooting.
+explore it interactively (search/select samples, switch between
+counts/percentage/proportion, hover/zoom/pan/export) without writing any
+Python. It runs entirely on your machine and never sends data anywhere else.
+
+**How to launch it:**
+
+* **Already have the repo cloned?** Open a terminal in the repository root
+  and run the launcher for your platform -- no setup needed, it creates its
+  own isolated environment and installs everything the first time it runs:
+
+  | Platform | Command |
+  | --- | --- |
+  | macOS | `./launch_dashboard.sh` (or double-click `launch_dashboard.command` in Finder) |
+  | Linux | `./launch_dashboard.sh` |
+  | Windows | Double-click `launch_dashboard.bat`, or run `launch_dashboard.bat` from a terminal |
+
+* **Installed via `pip` instead?** Use the console command that comes with
+  the package:
+
+  ```console
+  pip install SigProfilerPlotting
+  sigprofilerplotting-web
+  ```
+
+Either way, your default browser opens to the dashboard automatically once
+the server is ready. To stop it, press `Ctrl+C` in that terminal, click the
+**Quit** button in the dashboard itself, or run the same command again with
+`--stop` from another terminal.
+
+See the [full dashboard documentation](https://sigprofilersuite.github.io/SigProfilerPlotting/Plotting-Dashboard.html)
+for every command-line flag, supported mutation contexts, and troubleshooting.
 
 **EXAMPLE**
 
