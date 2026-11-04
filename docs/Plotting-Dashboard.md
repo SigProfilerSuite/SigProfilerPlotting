@@ -7,74 +7,131 @@ export, without writing any Python.
 
 !!! note
     The dashboard runs entirely on your machine. It binds only to
-    `127.0.0.1` and never sends your data anywhere else.
+    `127.0.0.1` and never sends your data anywhere else. The only way to
+    load a matrix is through your browser's own file picker -- there is no
+    server-side file browser and no network upload.
 
-## Installing and launching
+## Launching the dashboard
 
 There are two ways to run the dashboard, depending on how you got the code.
 
-**From a cloned repository**, use one of the one-click launcher scripts in
-the repository root. Each creates (or reuses) its own isolated `.venv-dashboard`
-virtual environment and installs the package into it -- only the first time,
-or whenever the package's dependencies change:
+### From a cloned repository
 
-| Platform | Script |
+Open a terminal in the repository root (the folder containing
+`launch_dashboard.sh`) and run the launcher for your platform:
+
+| Platform | How to launch |
 | --- | --- |
-| macOS | Double-click `launch_dashboard.command` |
-| Linux / macOS (terminal) | `./launch_dashboard.sh` |
-| Windows | Double-click `launch_dashboard.bat`, or run it from a terminal |
+| macOS | `./launch_dashboard.sh`, or double-click `launch_dashboard.command` in Finder |
+| Linux | `./launch_dashboard.sh` |
+| Windows | Double-click `launch_dashboard.bat`, or run `launch_dashboard.bat` from a terminal/PowerShell |
 
-**From a `pip install`**, use the installed console command instead -- it
-runs directly in your current environment, with no separate virtual
-environment:
+The first time you run it, the launcher creates an isolated `.venv-dashboard`
+virtual environment next to it and installs the package into it. This can
+take a minute or two. Every later launch reuses that environment and starts
+in a couple of seconds -- you'll see `Dependencies already installed;
+skipping install.` printed instead of an install running.
+
+### From a `pip install`
+
+Install the package as usual and run the console script it provides. This
+runs directly in whatever Python environment you installed it into -- no
+separate virtual environment is created or managed for you:
 
 ```console
-pip install sigProfilerPlotting
+pip install SigProfilerPlotting
 sigprofilerplotting-web
 ```
 
-Both open your default browser to the dashboard once the server is ready.
+### What happens next
+
+Either way, once the server is ready your default browser opens
+automatically to the dashboard, and the terminal prints the URL it's running
+at (`http://127.0.0.1:<port>/`) along with a reminder of how to stop it.
+If a dashboard is already running, launching again does not start a second
+copy -- it prints the existing one's URL and exits.
 
 ### Command-line options
+
+All of these work with any of the launcher scripts, `sigprofilerplotting-web`,
+or `SigProfilerPlotting dashboard` (the CLI subcommand, if you prefer
+invoking it that way):
 
 | Flag | Effect |
 | --- | --- |
 | `--no-launch` | Start the server without opening a browser tab. |
-| `--reinstall` | Force a fresh dependency install (launcher scripts only; ignored by `sigprofilerplotting-web`, which never manages its own environment). |
+| `--reinstall` | Force a fresh dependency install even if nothing changed (launcher scripts only -- `sigprofilerplotting-web` never manages its own environment, so this has no effect there). |
 | `--stop` | Stop a running dashboard server and exit. |
 | `--help` | Print usage and exit. |
 
 ## Stopping the dashboard
 
-Press `Ctrl+C` in the terminal running the server, or run the same launcher
-(or `sigprofilerplotting-web`) with `--stop` from another terminal.
+Any of these will cleanly shut the server down:
+
+* Click the **Quit** button in the top-right corner of the dashboard page.
+* Press `Ctrl+C` in the terminal the server is running in.
+* Run the launcher (or `sigprofilerplotting-web`) again with `--stop`, from
+  another terminal.
 
 ## Using the dashboard
 
-1. Click **Browse** (or drag a file in) to upload a tab- or comma-separated
-   matrix. The file never leaves your machine -- there is no server-side file
-   browser, only your browser's own file picker.
+1. Click **Choose a matrix file** (or drag a file onto it) to upload a tab-
+   or comma-delimited matrix with a mutation-context column and one column
+   per sample or signature. The first column's header can be named
+   `MutationType`, `Mutation Types`, `classification`, `index`, `context`,
+   or simply left blank -- all of these are accepted, matching the different
+   ways SigProfiler tools and `pandas` themselves name (or don't name) that
+   column.
 2. The dashboard detects the mutation context automatically from the
-   complete set of row labels, not from the filename or row count, and lists
-   every sample/signature column. Use the search box, **Select all**, or
-   **Clear all** to choose which ones to view.
-3. Toggle **Counts** / **Percentage** to switch how values are displayed.
-4. Selected samples render as you scroll -- the dashboard does not try to
-   render every selected sample up front, so selecting hundreds of samples
-   stays responsive.
-5. Every chart supports the standard Plotly toolbar: hover for exact values,
-   zoom/pan, reset the view, and export as an image.
+   complete set of row labels -- never from the filename or row count -- and
+   lists every sample/signature column in the sidebar.
+3. **Choosing what to view:**
+    * Use the search box, **Select all**, or **Clear all** to pick which
+      samples/signatures to draw.
+    * If the matrix has more than 100 samples/signatures, only the first one
+      is selected by default so the page stays responsive immediately --
+      everyone else is still right there in the list to search for and
+      select.
+    * Selected items render as you scroll; the dashboard never tries to draw
+      every selected sample up front, so selecting hundreds at once stays
+      responsive.
+4. **Values panel:** switch between **Counts** (raw numbers), **Percentage**
+   (share of the sample's total, 0-100%), and **Proportion** (the same
+   share, 0-1) at any time -- every open chart redraws immediately.
+5. For `SBS4608` and `SBS1536` matrices, an extra panel controls which
+   panels of the multi-part figure are shown (see below).
+6. Every chart supports the standard Plotly toolbar: hover for exact values,
+   zoom/pan, reset the view, and export as a PNG or SVG image.
 
 ## Supported contexts
 
-The dashboard has purpose-built views for `SBS96`, `SBS288`, `DBS78`, `ID83`,
-`CNV48`, `SV32`, and the strand-tagged `SBS4608` format (the same
-multi-panel view as [`plotInteractive`](Plotting-SBS4608.md), including its
-default, transcription-strand, genic/intergenic, and heatmap panels).
+The dashboard has a purpose-built, COSMIC-style view for:
 
-Any other context SigProfilerPlotting recognizes -- `SBS1536`, `SBS6`,
-`ID96`, `DBS1248`, and so on -- is never rejected; it renders with a generic
-grouped bar view instead of a specialized one.
+* **`SBS96`** -- the classic colored substitution-type header bands and
+  trinucleotide-colored axis ticks.
+* **`SBS4608`** -- the same multi-panel view as
+  [`plotInteractive`](Plotting-SBS4608.md): a 96-bin bar chart, a 5-base
+  context ("total") heatmap, front/back detailed heatmaps, and a
+  transcription-bias panel (Transcribed/Untranscribed, Genic/Intergenic).
+  A **Top panel** control switches the main chart between **Default**,
+  **Strand bias**, and **Genic bias**; three **Show** checkboxes toggle the
+  **Transcription bias**, **5-base context (total heatmap)**, and **Detailed
+  heatmaps (front/back)** sections independently -- hiding a section
+  reclaims its space instead of leaving it blank.
+* **`SBS1536`** -- the same bar chart, 5-base context heatmap, and detailed
+  front/back heatmaps as `SBS4608`'s default view, since a 1536-row matrix
+  is exactly what `SBS4608` data becomes once its strand tag is summed away.
+  There is no strand information in an `SBS1536` matrix, so the **Top
+  panel** variants and the **Transcription bias** section do not apply and
+  are not shown.
+* **`SBS288`**, **`DBS78`**, **`ID83`**, **`CNV48`**, and **`SV32`** --
+  each with its own grouped, correctly colored and labeled layout.
+
+Any other context SigProfilerPlotting recognizes -- `SBS1536`'s sibling
+sizes `SBS6`, `SBS18`, `SBS24`, `SBS384`, `SBS6144`, the other `DBS`/`ID`
+sizes (`DBS150`, `DBS186`, `DBS1248`, `DBS2400`, `DBS2976`, `ID28`, `ID96`,
+`ID332`, `ID415`, `ID8628`), and so on -- is never rejected; it renders with
+a generic grouped bar view instead of a specialized one.
 
 ## Common input errors
 
@@ -87,9 +144,15 @@ are all rejected with a message naming the exact row or column at fault.
 
 - **The browser didn't open:** open the URL printed in the terminal manually
   (`http://127.0.0.1:<port>/`).
-- **"Address already in use" or the dashboard won't start:** another
-  dashboard instance may already be running -- run the launcher with
-  `--stop` first.
+- **"Dashboard is already running" / it won't start a second copy:** this is
+  expected -- the launcher refuses to start a second server rather than
+  silently orphaning the first. Run it with `--stop` first if you actually
+  want to restart it.
+- **Uploading a large matrix seems slow / shows nothing for a while:** very
+  wide matrices (many thousands of samples) take real time to parse and
+  upload -- this is normal; the upload has succeeded once the sample list
+  populates. There is no progress bar for the upload itself yet.
 - **Changes to the package aren't showing up:** run the launcher with
   `--reinstall` to force a fresh dependency install (repository launcher
-  scripts only).
+  scripts only); if you're running the server from a previous launch, stop
+  it (`--stop`) and start it again -- code changes require a restart.
