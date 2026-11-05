@@ -204,19 +204,21 @@ def _remove_pidfile_if_matches(pidfile: Path, pid: int, port: int, token: str) -
         pidfile.unlink(missing_ok=True)
 
 
-def _wait_for_identity_gone(port: int, timeout: float = 5.0) -> None:
-    """Block until ``/api/identity`` on ``port`` stops responding, or timeout.
+def _wait_for_identity_gone(port: int, timeout: float = 5.0) -> bool:
+    """Wait for ``/api/identity`` on ``port`` to stop responding.
 
     A successful shutdown POST only means the request was accepted -- the
     server may take a moment to unwind ``serve_forever()`` and release the
-    port. Waiting here (bounded) avoids declaring the dashboard stopped,
-    and the pidfile safe to remove, while it may still briefly be live.
+    port. Returns True once it has actually gone, False if ``timeout``
+    elapses first -- callers must treat a timeout as "still possibly
+    live," never as "stopped," since those require different cleanup.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _fetch_identity(port) is None:
-            return
+            return True
         time.sleep(0.05)
+    return _fetch_identity(port) is None
 
 
 def _acquire_startup_lock(timeout: float = 5.0) -> Path | None:
@@ -293,16 +295,38 @@ def stop_server() -> bool:
         )
         return False
 
-    _wait_for_identity_gone(port)
+    if not _wait_for_identity_gone(port):
+        # The shutdown POST was accepted, but the server never actually
+        # went away within the timeout -- it may be stalled mid-shutdown or
+        # simply still alive. Treat this exactly like a failed shutdown:
+        # keep the pidfile, since it may be the only record of a server
+        # that is, in fact, still running.
+        print(
+            f"Dashboard server (pid {pid}) did not confirm shutdown in time "
+            "-- it may still be running; the pidfile has been kept.",
+            flush=True,
+        )
+        return False
+
     # Coordinate with the startup lock so a launch racing this cleanup can
     # never observe a half-stopped server as "nothing running" before this
-    # pidfile removal (or its own replacement write) has settled.
+    # pidfile removal (or its own replacement write) has settled. If the
+    # lock itself cannot be acquired, skip the removal entirely rather than
+    # compare-and-delete unlocked -- that would race the lock holder's own
+    # read of this same pidfile. The next launch or `--stop` will verify
+    # and clean it up.
     lock_path = _acquire_startup_lock()
+    if lock_path is None:
+        print(
+            f"Stopped dashboard server (pid {pid}); its pidfile will be "
+            "cleaned up by the next launch.",
+            flush=True,
+        )
+        return True
     try:
         _remove_pidfile_if_matches(pidfile, pid, port, token)
     finally:
-        if lock_path is not None:
-            lock_path.unlink(missing_ok=True)
+        lock_path.unlink(missing_ok=True)
     print(f"Stopped dashboard server (pid {pid}).", flush=True)
     return True
 
@@ -361,11 +385,15 @@ def _run_server(no_launch: bool, cosmic_dir: str | None = None) -> None:
         # may have already written its own pid/port/token into this pidfile
         # (e.g. it started right after this server began shutting down but
         # before this `finally` ran) -- this must never delete that record.
+        # If the lock itself cannot be acquired, skip the removal entirely
+        # rather than compare-and-delete unlocked, which would race the
+        # lock holder's own read of this same pidfile; the next launch or
+        # `--stop` will verify and clean it up.
         cleanup_lock = _acquire_startup_lock()
-        try:
-            _remove_pidfile_if_matches(pidfile, os.getpid(), port, token)
-        finally:
-            if cleanup_lock is not None:
+        if cleanup_lock is not None:
+            try:
+                _remove_pidfile_if_matches(pidfile, os.getpid(), port, token)
+            finally:
                 cleanup_lock.unlink(missing_ok=True)
 
 

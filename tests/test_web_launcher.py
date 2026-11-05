@@ -197,6 +197,127 @@ def test_failed_shutdown_keeps_verified_pidfile(tmp_path, monkeypatch, capsys):
     assert "Could not stop the dashboard server" in capsys.readouterr().out
 
 
+def test_shutdown_wait_timeout_keeps_verified_pidfile_and_returns_false(
+    tmp_path, monkeypatch, capsys
+):
+    # plotting_A's final edge review: a successful shutdown POST does not
+    # guarantee the server has actually gone away by the time
+    # _wait_for_identity_gone()'s deadline expires. stop_server() must
+    # treat that timeout exactly like a failed shutdown -- keep the
+    # pidfile and report failure -- not silently proceed to delete it and
+    # claim success for a server that may still be alive.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("4242:51000:thetoken", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_verify_identity", lambda pid, port, token: True)
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda *a, **k: None)
+    monkeypatch.setattr(launcher, "_wait_for_identity_gone", lambda port, timeout=5.0: False)
+
+    result = launcher.stop_server()
+
+    assert result is False
+    assert pidfile.read_text(encoding="utf-8") == "4242:51000:thetoken"
+    assert "did not confirm shutdown in time" in capsys.readouterr().out
+
+
+def test_wait_for_identity_gone_returns_true_once_identity_disappears(monkeypatch):
+    calls = iter([{"pid": 1}, None])
+    monkeypatch.setattr(launcher, "_fetch_identity", lambda port, timeout=1.0: next(calls))
+    assert launcher._wait_for_identity_gone(51000, timeout=5.0) is True
+
+
+def test_wait_for_identity_gone_returns_false_on_timeout(monkeypatch):
+    monkeypatch.setattr(launcher, "_fetch_identity", lambda port, timeout=1.0: {"pid": 1})
+    assert launcher._wait_for_identity_gone(51000, timeout=0.1) is False
+
+
+def test_stop_skips_pidfile_removal_when_startup_lock_is_unavailable(
+    tmp_path, monkeypatch, capsys
+):
+    # Point 4 of the final edge review: compare-and-delete must never run
+    # unlocked. If another process is holding the startup lock, stop_server()
+    # must leave the pidfile for that holder (or the next launch) to verify
+    # and clean up, rather than racing it with an unlocked read/unlink.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("4242:51000:thetoken", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_verify_identity", lambda pid, port, token: True)
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda *a, **k: None)
+    monkeypatch.setattr(launcher, "_wait_for_identity_gone", lambda port, timeout=5.0: True)
+    monkeypatch.setattr(launcher, "_acquire_startup_lock", lambda timeout=5.0: None)
+
+    result = launcher.stop_server()
+
+    assert result is True
+    assert pidfile.read_text(encoding="utf-8") == "4242:51000:thetoken"
+
+
+def test_run_server_cleanup_skips_pidfile_removal_when_startup_lock_is_unavailable(
+    tmp_path, monkeypatch
+):
+    # Drives the real _run_server() start-then-exit sequence (on a
+    # background thread, stopped via a real HTTP shutdown from the main
+    # thread, exactly like test_concurrent_launches_leave_exactly_one_managed_server
+    # does), but makes the startup lock available for the initial
+    # check-then-write and then unavailable for the final cleanup --
+    # simulating another launch holding the lock at exactly the moment
+    # this instance tries to clean up. compare-and-delete must be skipped
+    # entirely, not run unlocked.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher.signal, "signal", lambda *a, **k: None)
+    pidfile = tmp_path / "dashboard.pid"
+    real_acquire = launcher._acquire_startup_lock
+    calls = []
+
+    def fake_acquire(timeout=5.0):
+        calls.append(timeout)
+        if len(calls) == 1:
+            return real_acquire(timeout=timeout)
+        return None  # cleanup's acquisition attempt: simulate another holder
+
+    monkeypatch.setattr(launcher, "_acquire_startup_lock", fake_acquire)
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("compare-and-delete must not run without the lock")
+
+    monkeypatch.setattr(launcher, "_remove_pidfile_if_matches", fail_if_called)
+
+    thread = threading.Thread(target=launcher._run_server, kwargs={"no_launch": True}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not pidfile.is_file() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert pidfile.is_file(), "the server never reached a bound state"
+        recorded_pid, port, token = launcher._read_pidfile(pidfile)
+
+        # Stop it via the real identity-verified HTTP shutdown path, exactly
+        # as a user's --stop would -- this is what makes serve_forever()
+        # return and the finally-block cleanup under test actually run.
+        request = launcher.urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/shutdown",
+            data=b"{}",
+            method="POST",
+            headers={
+                "Origin": f"http://127.0.0.1:{port}",
+                "Content-Type": "application/json",
+                "X-Dashboard-Token": token,
+            },
+        )
+        launcher.urllib.request.urlopen(request, timeout=5.0)
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    finally:
+        if thread.is_alive():
+            thread.join(timeout=1)
+
+    assert len(calls) == 2
+    # Cleanup was skipped (the lock was "held" by someone else), so the
+    # pidfile this instance wrote is still there, untouched.
+    assert pidfile.is_file()
+    assert launcher._read_pidfile(pidfile) == (recorded_pid, port, token)
+
+
 def test_managed_main_stop_short_circuits_before_ensure_dependencies(monkeypatch):
     calls = []
 
