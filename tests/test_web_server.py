@@ -57,6 +57,28 @@ def _sbs6_tsv():
     return "\n".join(lines) + "\n"
 
 
+# SigProfilerPlotting does not bundle or redistribute COSMIC's signature
+# catalogues -- configure a small, synthetic, user-supplied-style catalogue
+# directory for the tests below instead of relying on real bundled data.
+@pytest.fixture(autouse=True)
+def _cosmic_catalogue(tmp_path):
+    from sigProfilerPlotting.web import cosmic
+    from sigProfilerPlotting.web.matrix import REFERENCE_CONTEXTS
+
+    labels = list(REFERENCE_CONTEXTS["SBS96"])
+    directory = tmp_path / "cosmic"
+    directory.mkdir()
+    names = ["SBS1", "SBS2", "SBS3", "SBS4", "SBS5", "SBS13"]
+    lines = ["\t".join(["Type", *names])]
+    for idx, label in enumerate(labels):
+        row = [label] + [str(((idx * 7 + col * 13 + 3) % 23) / 23.0) for col in range(len(names))]
+        lines.append("\t".join(row))
+    (directory / "COSMIC_v3.4_SBS_GRCh37.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cosmic.configure_catalogue_dir(directory)
+    yield
+    cosmic.configure_catalogue_dir(None)
+
+
 def test_index_page_is_served(running_server):
     conn = _connection(running_server)
     conn.request("GET", "/")
@@ -306,13 +328,35 @@ def test_quit_button_shuts_down_the_running_server():
         server.server_close()
 
 
-def test_cosmic_builds_endpoint_lists_bundled_genome_builds(running_server):
+def test_cosmic_builds_endpoint_lists_configured_genome_builds(running_server):
     conn = _connection(running_server)
     conn.request("GET", "/api/cosmic/builds")
     resp = conn.getresponse()
     assert resp.status == 200
     body = json.loads(resp.read())
-    assert body["builds"] == ["GRCh37", "GRCh38", "mm9", "mm10", "mm39", "rn6", "rn7"]
+    assert body["builds"] == ["GRCh37"]
+    assert len(body["catalogues"]) == 1
+    info = body["catalogues"][0]
+    assert info["build"] == "GRCh37"
+    assert info["version"] == "3.4"
+    assert info["signature_count"] == 6
+    assert "checksum" in info and "source_path" in info
+    assert body["catalogue_dir"] == info["source_path"].rsplit("/", 1)[0]
+    conn.close()
+
+
+def test_cosmic_builds_endpoint_reports_no_builds_without_a_configured_directory(running_server):
+    from sigProfilerPlotting.web import cosmic
+
+    cosmic.configure_catalogue_dir(None)
+    conn = _connection(running_server)
+    conn.request("GET", "/api/cosmic/builds")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    body = json.loads(resp.read())
+    assert body["builds"] == []
+    assert body["catalogues"] == []
+    assert body["catalogue_dir"] is None
     conn.close()
 
 

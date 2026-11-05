@@ -55,7 +55,9 @@ setup(
             "sigprofilerplotting-web=sigProfilerPlotting.web.launcher:main",
         ],
     },
-    package_data={"": ["fonts/*.ttf", "web/static/*", "web/cosmic_signatures/*.txt"]},
+    # No COSMIC catalogue data is bundled or distributed here -- see
+    # sigProfilerPlotting/web/cosmic.py's module docstring.
+    package_data={"": ["fonts/*.ttf", "web/static/*"]},
     include_package_data=True,
     zip_safe=False,
 )

@@ -448,7 +448,27 @@ def test_sbs1536_has_no_variant_or_transcription_bias_controls(tmp_path):
         assert page.is_checked('input[name="variant"][value="default"]')
 
 
-def test_cosmic_comparison_only_activates_for_one_selected_sample(tmp_path):
+@pytest.fixture
+def _cosmic_catalogue(tmp_path_factory):
+    # SigProfilerPlotting does not bundle or redistribute COSMIC's signature
+    # catalogues -- configure a small, synthetic, user-supplied-style
+    # catalogue directory instead of relying on real bundled data.
+    from sigProfilerPlotting.web import cosmic
+
+    labels = _labels("SBS96")
+    directory = tmp_path_factory.mktemp("cosmic")
+    names = ["SBS1", "SBS2", "SBS3", "SBS4", "SBS5", "SBS13"]
+    lines = ["\t".join(["Type", *names])]
+    for idx, label in enumerate(labels):
+        row = [label] + [str(((idx * 7 + col * 13 + 3) % 23) / 23.0) for col in range(len(names))]
+        lines.append("\t".join(row))
+    (directory / "COSMIC_v3.4_SBS_GRCh37.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cosmic.configure_catalogue_dir(directory)
+    yield
+    cosmic.configure_catalogue_dir(None)
+
+
+def test_cosmic_comparison_only_activates_for_one_selected_sample(tmp_path, _cosmic_catalogue):
     sbs96_path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1", "Sample2"])
     dbs78_path = _write_matrix(tmp_path / "dbs78.txt", "DBS78", ["S0"])
     with _dashboard() as page:
@@ -498,7 +518,7 @@ def test_cosmic_comparison_only_activates_for_one_selected_sample(tmp_path):
 
 
 @pytest.mark.parametrize("context", ["SBS288", "SBS1536", "SBS4608"])
-def test_cosmic_comparison_is_available_for_collapsible_sbs_contexts(tmp_path, context):
+def test_cosmic_comparison_is_available_for_collapsible_sbs_contexts(tmp_path, context, _cosmic_catalogue):
     path = _write_matrix(tmp_path / f"{context}.txt", context, ["S0"], low=1, high=20)
     with _dashboard() as page:
         _upload(page, path, context, 1)
@@ -510,6 +530,21 @@ def test_cosmic_comparison_is_available_for_collapsible_sbs_contexts(tmp_path, c
             "() => document.querySelectorAll('.card .compare-match .js-plotly-plot').length === 5"
         )
         assert page.locator(".card .compare:not(.hidden)").count() == 1
+
+
+def test_cosmic_comparison_stays_disabled_without_a_configured_catalogue(tmp_path):
+    # With no catalogue directory configured at all (the package's default --
+    # it never bundles or redistributes COSMIC data), the panel must stay
+    # disabled and explain why, even for an otherwise-eligible selection.
+    from sigProfilerPlotting.web import cosmic
+
+    cosmic.configure_catalogue_dir(None)
+    sbs96_path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1"])
+    with _dashboard() as page:
+        _upload(page, sbs96_path, "SBS96", 1)
+        assert page.is_visible("#cosmicPanel")
+        assert page.is_disabled("#cosmicEnabled")
+        assert "does not bundle" in page.text_content("#cosmicHint")
 
 
 def test_sbs4608_switches_the_whole_figure(tmp_path):

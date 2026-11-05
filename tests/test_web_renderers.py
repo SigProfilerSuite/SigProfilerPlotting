@@ -1,9 +1,36 @@
 import pytest
 
+from sigProfilerPlotting.web import cosmic
 from sigProfilerPlotting.web.matrix import MatrixData, load_matrix
 from sigProfilerPlotting.web.renderers import render_sample
 
 SBS6_LABELS = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
+
+# SigProfilerPlotting does not bundle or redistribute COSMIC's signature
+# catalogues -- every test below configures its own small, synthetic,
+# user-supplied-style catalogue directory instead of relying on real
+# bundled data.
+_COSMIC_SIGNATURE_NAMES = ["SBS1", "SBS2", "SBS3", "SBS4", "SBS5", "SBS13"]
+
+
+@pytest.fixture(autouse=True)
+def _cosmic_catalogue(tmp_path):
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    labels = list(matrix_module.REFERENCE_CONTEXTS["SBS96"])
+    directory = tmp_path / "cosmic"
+    directory.mkdir()
+    header = ["Type"] + _COSMIC_SIGNATURE_NAMES
+    lines = ["\t".join(header)]
+    for idx, label in enumerate(labels):
+        row = [label] + [
+            str(((idx * 7 + col * 13 + 3) % 23) / 23.0) for col in range(len(_COSMIC_SIGNATURE_NAMES))
+        ]
+        lines.append("\t".join(row))
+    (directory / "COSMIC_v3.4_SBS_GRCh37.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cosmic.configure_catalogue_dir(directory)
+    yield
+    cosmic.configure_catalogue_dir(None)
 
 
 def _write(path, labels, columns=("S1",), values=None):

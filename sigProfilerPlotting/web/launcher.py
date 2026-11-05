@@ -254,7 +254,12 @@ def stop_server() -> None:
         pidfile.unlink(missing_ok=True)
 
 
-def _run_server(no_launch: bool) -> None:
+def _run_server(no_launch: bool, cosmic_dir: str | None = None) -> None:
+    if cosmic_dir:
+        from . import cosmic
+
+        cosmic.configure_catalogue_dir(cosmic_dir)
+
     pidfile = _pidfile()
     lock_path = _acquire_startup_lock()
     if lock_path is None:
@@ -316,6 +321,19 @@ def _build_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--stop", action="store_true", help="Stop a running dashboard server and exit."
     )
+    parser.add_argument(
+        "--cosmic-dir",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Folder holding your own authorized COSMIC SBS reference files "
+            "(named like COSMIC_v3.4_SBS_GRCh37.txt) to enable the dashboard's "
+            "COSMIC comparison panel. SigProfilerPlotting does not bundle or "
+            "redistribute this data -- see docs/Plotting-Dashboard.md for where "
+            "to obtain it. Defaults to the SIGPROFILERPLOTTING_COSMIC_DIR "
+            "environment variable if this flag is omitted."
+        ),
+    )
     # Internal: used only by the launcher shell scripts, before the package is
     # necessarily importable yet, to run just the install-fingerprint check.
     parser.add_argument("--ensure-deps-only", action="store_true", help=argparse.SUPPRESS)
@@ -332,7 +350,7 @@ def managed_main(argv: list[str] | None = None) -> int:
         ensure_dependencies(_repo_root(), force=args.reinstall)
         return 0
     ensure_dependencies(_repo_root(), force=args.reinstall)
-    _run_server(no_launch=args.no_launch)
+    _run_server(no_launch=args.no_launch, cosmic_dir=args.cosmic_dir)
     return 0
 
 
@@ -354,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             "`pip install --force-reinstall sigProfilerPlotting`.",
             flush=True,
         )
-    _run_server(no_launch=args.no_launch)
+    _run_server(no_launch=args.no_launch, cosmic_dir=args.cosmic_dir)
     return 0
 
 
