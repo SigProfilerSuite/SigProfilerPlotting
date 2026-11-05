@@ -15,12 +15,10 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
-import re
 import secrets
+import tempfile
 import threading
 import traceback
-from email import policy
-from email.parser import BytesParser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,7 +31,14 @@ STATIC_ROOT = (Path(__file__).parent / "static").resolve()
 
 _EXTRA_MIME_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
-_NAME_RE = re.compile(r'name="([^"]*)"')
+# A real SBS4608 matrix can run into the hundreds of MB of plain text
+# (tens of thousands of sample columns); this is a safety cap against a
+# truly unreasonable upload, not a tight budget -- the point of streaming
+# straight to a temp file (_dispatch_post) is that memory use no longer
+# scales with this number at all. Configurable since "unreasonable" is a
+# judgment call that depends on the machine running the dashboard.
+MAX_UPLOAD_BYTES = int(os.environ.get("SIGPROFILERPLOTTING_MAX_UPLOAD_BYTES", 4 * 1024 * 1024 * 1024))
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 # Defense-in-depth: 'unsafe-inline' is only for style-src (Plotly sets inline
 # styles on its generated elements); the dashboard's own JS has no inline
@@ -56,12 +61,39 @@ class DashboardHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, handler_class):
         super().__init__(server_address, handler_class)
         self.dashboard_matrix = None
+        # The temp file backing dashboard_matrix's lazy, disk-backed reads
+        # (see matrix.py) -- owned by the server, not by MatrixData, so it
+        # can be cleaned up here when replaced by a new upload or when the
+        # server shuts down, rather than ever leaking.
+        self._matrix_tempfile: str | None = None
         # A fresh random token per launch -- the launcher's pidfile records
         # it alongside the pid/port, and treats a pid/port whose live
         # /api/identity doesn't echo this exact token as unrelated to this
         # server (stale pidfile, reused pid, or a different process on the
         # same port), rather than ever trusting the pidfile's pid alone.
         self.instance_token = secrets.token_hex(16)
+
+    def set_dashboard_matrix(self, matrix, tempfile_path: str | None) -> None:
+        """Replace the active matrix, cleaning up whatever temp file the
+        previous one was reading from (if any) -- uploading a new matrix
+        must not leak the old one's backing file."""
+        previous = self._matrix_tempfile
+        self.dashboard_matrix = matrix
+        self._matrix_tempfile = tempfile_path
+        if previous is not None:
+            try:
+                os.unlink(previous)
+            except OSError:
+                pass
+
+    def server_close(self) -> None:
+        super().server_close()
+        if self._matrix_tempfile is not None:
+            try:
+                os.unlink(self._matrix_tempfile)
+            except OSError:
+                pass
+            self._matrix_tempfile = None
 
 
 def make_server(host: str = "127.0.0.1", port: int = 0) -> DashboardHTTPServer:
@@ -94,30 +126,32 @@ def _allowed_origin(header_value: str | None, port: int) -> bool:
     return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
 
 
-def _extract_matrix_payload(raw: bytes, content_type: str) -> bytes:
-    """Pull the uploaded matrix bytes out of a (possibly multipart) POST body."""
-    if not content_type.startswith("multipart/form-data"):
-        if not raw:
-            raise MatrixError("No matrix data was received.")
-        return raw
-    # Hand the body to the stdlib email parser by prefixing the real
-    # Content-Type header -- this reuses a well-tested MIME multipart parser
-    # instead of a hand-rolled boundary splitter (the `cgi` module used by
-    # older examples was removed in Python 3.13).
-    header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
-    message = BytesParser(policy=policy.compat32).parsebytes(header + raw)
-    if not message.is_multipart():
-        raise MatrixError("Malformed multipart upload.")
-    for part in message.get_payload():
-        disposition = part.get("Content-Disposition", "")
-        match = _NAME_RE.search(disposition)
-        field_name = match.group(1) if match else None
-        if field_name == "matrix" or "filename=" in disposition:
-            payload = part.get_payload(decode=True)
-            if not payload:
-                raise MatrixError("The uploaded matrix field is empty.")
-            return payload
-    raise MatrixError("The upload did not include a 'matrix' file field.")
+def _stream_upload_to_tempfile(rfile, content_length: int) -> str:
+    """Write exactly `content_length` bytes from `rfile` to a new private
+    temp file in bounded chunks, never holding the whole upload in memory
+    at once (see the module docstring and matrix.py's). The caller owns
+    the returned path and must clean it up on any failure path.
+    """
+    fd, path = tempfile.mkstemp(suffix=".sppmatrix")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            remaining = content_length
+            while remaining > 0:
+                chunk = rfile.read(min(remaining, _UPLOAD_CHUNK_SIZE))
+                if not chunk:
+                    raise MatrixError(
+                        "The upload ended early; fewer bytes were received than "
+                        "the Content-Length header promised."
+                    )
+                handle.write(chunk)
+                remaining -= len(chunk)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
@@ -284,16 +318,44 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if not _allowed_origin(self.headers.get("Origin"), self._port()):
             self._reject(HTTPStatus.FORBIDDEN, "Unrecognized Origin header.")
             return
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b""
-        content_type = self.headers.get("Content-Type", "")
+
+        header = self.headers.get("Content-Length")
         try:
-            payload = _extract_matrix_payload(raw, content_type)
-            matrix = load_matrix(payload)
+            length = int(header)
+        except (TypeError, ValueError):
+            self._reject(HTTPStatus.LENGTH_REQUIRED, "A valid Content-Length header is required.")
+            return
+        if length < 0:
+            self._reject(HTTPStatus.BAD_REQUEST, "Content-Length must not be negative.")
+            return
+        if length == 0:
+            self._reject(HTTPStatus.BAD_REQUEST, "No matrix data was received.")
+            return
+        if length > MAX_UPLOAD_BYTES:
+            self._reject(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                f"The upload ({length} bytes) exceeds the {MAX_UPLOAD_BYTES}-byte limit.",
+            )
+            return
+
+        # Stream the body straight to a temp file in bounded chunks -- this
+        # is the fix for the memory scaling plotting_A's review measured:
+        # a real SBS4608 upload (tens of thousands of sample columns) must
+        # never be held whole in memory, here or in matrix.py, which reads
+        # lazily from this same file afterward.
+        tmp_path = None
+        try:
+            tmp_path = _stream_upload_to_tempfile(self.rfile, length)
+            matrix = load_matrix(tmp_path)
         except MatrixError as exc:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
             self._reject(HTTPStatus.BAD_REQUEST, str(exc))
             return
-        self.server.dashboard_matrix = matrix
+        self.server.set_dashboard_matrix(matrix, tmp_path)
         self._write_json(
             HTTPStatus.OK,
             {

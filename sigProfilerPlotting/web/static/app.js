@@ -89,12 +89,19 @@ async function upload(file) {
   $('fileName').textContent = file.name;
   const before = $('matrixSummary').textContent;
   $('matrixSummary').textContent = 'Reading the matrix';
-  const form = new FormData();
-  form.append('matrix', file, file.name);
   let response;
   let body;
   try {
-    response = await fetch('/api/matrix', { method: 'POST', body: form });
+    // The browser streams a File body straight off disk rather than
+    // buffering it in JS memory first, which matters the same way on the
+    // client side that streaming the request straight to a temp file
+    // matters on the server: sigProfilerPlotting.web.matrix.py's own
+    // docstring explains why a real SBS4608 upload can be hundreds of MB.
+    response = await fetch('/api/matrix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
     body = await readJson(response);
   } catch (e) {
     $('matrixSummary').textContent = before;
