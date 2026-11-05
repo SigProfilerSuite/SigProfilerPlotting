@@ -62,6 +62,7 @@ invoking it that way):
 | `--no-launch` | Start the server without opening a browser tab. |
 | `--reinstall` | Force a fresh dependency install even if nothing changed (launcher scripts only -- `sigprofilerplotting-web` never manages its own environment, so this has no effect there). |
 | `--stop` | Stop a running dashboard server and exit. |
+| `--cosmic-dir PATH` | Enable the COSMIC comparison panel using your own downloaded reference files at `PATH` (see [Comparing against COSMIC signatures](#comparing-against-cosmic-signatures)). |
 | `--help` | Print usage and exit. |
 
 ## Stopping the dashboard
@@ -107,10 +108,36 @@ Any of these will cleanly shut the server down:
 
 ## Comparing against COSMIC signatures
 
-With an `SBS96`, `SBS288`, `SBS1536`, or `SBS4608` matrix loaded and exactly
-one sample or signature selected, check **Compare with COSMIC signatures**
-in the sidebar and pick a genome build (`GRCh37`, `GRCh38`, `mm9`, `mm10`,
-`mm39`, `rn6`, or `rn7` -- COSMIC v3.6). The plot splits into two panels:
+!!! note "SigProfilerPlotting does not bundle or redistribute COSMIC data"
+    COSMIC's published terms restrict redistributing their signature
+    catalogues, so none are shipped with this package. To use this feature,
+    download your own copy directly from COSMIC
+    ([cancer.sanger.ac.uk/signatures](https://cancer.sanger.ac.uk/signatures/))
+    under their license, and point the dashboard at the folder containing
+    it -- the panel stays disabled (with an explanatory hint) until you do.
+
+Launch the dashboard with `--cosmic-dir PATH` (any of the launcher scripts,
+`sigprofilerplotting-web`, or `SigProfilerPlotting dashboard` accept this),
+or set the `SIGPROFILERPLOTTING_COSMIC_DIR` environment variable, to a local
+folder containing your downloaded COSMIC SBS reference files. Each file must
+be named the way COSMIC's own downloads already are --
+`COSMIC_v<version>_SBS_<build>.txt` (for example
+`COSMIC_v3.4_SBS_GRCh37.txt`) -- tab-delimited, with a `Type` column of
+96 trinucleotide-context labels followed by one column per signature.
+Recognized `<build>` values: `GRCh37`, `GRCh38`, `mm9`, `mm10`, `mm39`,
+`rn6`, `rn7`. Only files present in that folder appear as choices in the
+dashboard; the folder is re-scanned on every request, so adding or removing
+a file takes effect without restarting the server.
+
+```console
+./launch_dashboard.sh --cosmic-dir ~/Downloads/COSMIC_v3.4_SBS
+```
+
+With a catalogue directory configured, an `SBS96`, `SBS288`, `SBS1536`, or
+`SBS4608` matrix loaded, and exactly one sample or signature selected, check
+**Compare with COSMIC signatures** in the sidebar and pick a genome build --
+each option's tooltip shows the exact file version, path, and SHA-256
+checksum it will compare against. The plot splits into two panels:
 
 * **Upper panel:** your selected sample/signature, unchanged -- including
   `SBS4608`/`SBS1536`'s own multi-part view.

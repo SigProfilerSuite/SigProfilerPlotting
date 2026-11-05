@@ -232,7 +232,24 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def _serve_cosmic_builds(self) -> None:
         from . import cosmic
 
-        self._write_json(HTTPStatus.OK, {"builds": cosmic.available_builds()})
+        catalogues = [
+            {
+                "build": info.build,
+                "version": info.version,
+                "source_path": info.source_path,
+                "checksum": info.checksum,
+                "signature_count": info.signature_count,
+            }
+            for info in cosmic.catalogue_metadata()
+        ]
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "builds": [c["build"] for c in catalogues],
+                "catalogues": catalogues,
+                "catalogue_dir": str(cosmic.catalogue_dir()) if cosmic.catalogue_dir() else None,
+            },
+        )
 
     def _serve_identity(self) -> None:
         # Loopback-only (every GET already passes _check_host()) proof of

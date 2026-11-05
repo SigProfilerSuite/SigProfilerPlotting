@@ -28,7 +28,7 @@ const state = {
   variant: 'default',
   // SBS4608 panels shown, as in plotInteractive: all on to begin with.
   toggles: { transcription_bias: true, total_heatmap: true, detailed_heatmaps: true },
-  cosmic: { builds: [], build: null, enabled: false },
+  cosmic: { builds: [], catalogues: [], build: null, enabled: false },
   limit: 0,               // how many selected samples may be drawn
   cards: new Map(),       // sample name -> card
   generation: 0,          // bumped per matrix, so late answers are dropped
@@ -167,7 +167,11 @@ function loadMatrix(info) {
 /* ------------------------------------------------------------- COSMIC */
 
 function cosmicEligible() {
-  return COSMIC_COMPATIBLE_CONTEXTS.has(state.context) && state.selected.size === 1;
+  return (
+    state.cosmic.builds.length > 0 &&
+    COSMIC_COMPATIBLE_CONTEXTS.has(state.context) &&
+    state.selected.size === 1
+  );
 }
 
 // Keeps the Compare-with-COSMIC controls consistent with the current
@@ -187,6 +191,11 @@ function syncCosmicControls() {
   }
   $('cosmicEnabled').disabled = !eligible;
   $('cosmicBuild').disabled = !eligible || !state.cosmic.enabled;
+  $('cosmicHint').textContent = state.cosmic.builds.length === 0
+    ? 'No COSMIC catalogue is configured. SigProfilerPlotting does not bundle this ' +
+      'data -- launch the dashboard with --cosmic-dir pointing at your own ' +
+      'downloaded COSMIC SBS reference files (see the docs) to enable this panel.'
+    : 'Select exactly one sample or signature to compare it.';
   $('cosmicHint').classList.toggle('hidden', eligible);
 }
 
@@ -196,14 +205,21 @@ async function loadCosmicBuilds() {
     const response = await fetch('/api/cosmic/builds');
     const body = await readJson(response);
     state.cosmic.builds = (response.ok && Array.isArray(body.builds)) ? body.builds : [];
+    state.cosmic.catalogues = (response.ok && Array.isArray(body.catalogues)) ? body.catalogues : [];
   } catch (e) {
     state.cosmic.builds = [];
+    state.cosmic.catalogues = [];
   }
   select.replaceChildren();
   for (const build of state.cosmic.builds) {
     const option = document.createElement('option');
     option.value = build;
     option.textContent = build;
+    const info = state.cosmic.catalogues.find((c) => c.build === build);
+    if (info) {
+      option.title = `COSMIC v${info.version} -- ${info.signature_count} signatures\n` +
+        `${info.source_path}\nsha256:${info.checksum}`;
+    }
     select.append(option);
   }
   state.cosmic.build = state.cosmic.builds[0] || null;

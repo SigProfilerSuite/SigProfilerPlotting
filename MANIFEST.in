@@ -2,5 +2,4 @@ include sigProfilerPlotting/fonts/*
 include sigProfilerPlotting/reference_formats/*
 include sigProfilerPlotting/controllers/*
 include sigProfilerPlotting/web/static/*
-include sigProfilerPlotting/web/cosmic_signatures/*
 include tests/*

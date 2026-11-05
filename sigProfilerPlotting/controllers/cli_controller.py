@@ -239,6 +239,16 @@ def parse_arguments_dashboard(args: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--stop", action="store_true", help="Stop a running dashboard server and exit."
     )
+    parser.add_argument(
+        "--cosmic-dir",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Folder holding your own authorized COSMIC SBS reference files "
+            "to enable the dashboard's COSMIC comparison panel. "
+            "SigProfilerPlotting does not bundle or redistribute this data."
+        ),
+    )
     return parser.parse_args(args)
 
 
@@ -254,6 +264,8 @@ def dispatch_dashboard(parsed_args: argparse.Namespace) -> None:
         argv.append("--no-launch")
     if parsed_args.stop:
         argv.append("--stop")
+    if parsed_args.cosmic_dir:
+        argv.extend(["--cosmic-dir", parsed_args.cosmic_dir])
     dashboard_main(argv)
 
 
