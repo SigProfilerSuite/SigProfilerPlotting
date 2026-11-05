@@ -175,14 +175,46 @@ def test_stop_does_not_kill_an_unrelated_process_named_by_a_stale_pidfile(
         process.wait(timeout=5)
 
 
+def test_failed_shutdown_keeps_verified_pidfile(tmp_path, monkeypatch, capsys):
+    # plotting_A's review: if the authenticated shutdown POST itself fails
+    # (e.g. the dashboard was reachable moments ago but the request errors
+    # out), stop_server() must not delete the pidfile anyway -- a live
+    # verified dashboard would then be left running with no management
+    # record, letting a later launch start a second server on top of it.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("4242:51000:thetoken", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_verify_identity", lambda pid, port, token: True)
+
+    def fail_urlopen(*a, **k):
+        raise launcher.urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", fail_urlopen)
+
+    result = launcher.stop_server()
+    assert result is False
+    assert pidfile.read_text(encoding="utf-8") == "4242:51000:thetoken"
+    assert "Could not stop the dashboard server" in capsys.readouterr().out
+
+
 def test_managed_main_stop_short_circuits_before_ensure_dependencies(monkeypatch):
     calls = []
-    monkeypatch.setattr(launcher, "stop_server", lambda: calls.append("stop"))
+
+    def fake_stop():
+        calls.append("stop")
+        return True
+
+    monkeypatch.setattr(launcher, "stop_server", fake_stop)
     monkeypatch.setattr(
         launcher, "ensure_dependencies", lambda *a, **k: calls.append("ensure")
     )
     assert launcher.managed_main(["--stop"]) == 0
     assert calls == ["stop"]
+
+
+def test_managed_main_stop_reports_failure_via_exit_code(monkeypatch):
+    monkeypatch.setattr(launcher, "stop_server", lambda: False)
+    assert launcher.managed_main(["--stop"]) == 1
 
 
 # -- Regression: launching twice without --stop in between must not orphan
@@ -264,6 +296,32 @@ def test_run_server_refuses_a_second_instance_without_touching_the_pidfile(
     assert pidfile.read_text(encoding="utf-8") == "4242:51000:thetoken"
 
 
+def test_exiting_old_instance_does_not_delete_new_instance_pidfile(tmp_path):
+    # plotting_A's review: _run_server()'s cleanup unconditionally removed
+    # dashboard.pid on exit. If a replacement instance wrote its own record
+    # after the old instance began shutting down but before this cleanup
+    # ran, the old instance would delete the *replacement's* pidfile,
+    # leaving the new, still-running server with no management record.
+    pidfile = tmp_path / "dashboard.pid"
+    old_pid, old_port, old_token = os.getpid(), 51000, "old-token"
+    pidfile.write_text(f"{old_pid}:{old_port}:{old_token}", encoding="utf-8")
+
+    # The replacement starts and writes its own record before the old
+    # instance's cleanup gets a chance to run.
+    pidfile.write_text("5678:52000:new-token", encoding="utf-8")
+
+    launcher._remove_pidfile_if_matches(pidfile, old_pid, old_port, old_token)
+
+    assert pidfile.read_text(encoding="utf-8") == "5678:52000:new-token"
+
+
+def test_remove_pidfile_if_matches_deletes_its_own_matching_record(tmp_path):
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text("1234:51000:thetoken", encoding="utf-8")
+    launcher._remove_pidfile_if_matches(pidfile, 1234, 51000, "thetoken")
+    assert not pidfile.exists()
+
+
 def test_acquire_startup_lock_is_exclusive_until_released(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
     held = launcher._acquire_startup_lock(timeout=0.2)
@@ -316,3 +374,46 @@ def test_concurrent_launches_leave_exactly_one_managed_server(tmp_path, monkeypa
         thread1.join(timeout=5)
     assert not thread1.is_alive()
     assert "already running at" not in first_output.getvalue()
+
+
+def test_stop_then_immediately_restart_succeeds(tmp_path, monkeypatch):
+    # Integration regression for the fixed lifecycle race: stopping a
+    # dashboard and immediately launching a new one must bind cleanly --
+    # never spuriously refused as "already running" against the
+    # just-stopped server's stale state, and never left unmanaged because
+    # stop_server() tore down the pidfile before the old server actually
+    # released its port.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    from sigProfilerPlotting.web.server import make_server
+
+    server = make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text(f"{os.getpid()}:{port}:{server.instance_token}", encoding="utf-8")
+
+    assert launcher.stop_server() is True
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert not pidfile.exists()
+
+    monkeypatch.setattr(launcher.signal, "signal", lambda *a, **k: None)
+    output = io.StringIO()
+
+    def run_second():
+        with contextlib.redirect_stdout(output):
+            launcher._run_server(no_launch=True)
+
+    thread2 = threading.Thread(target=run_second, daemon=True)
+    thread2.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not pidfile.is_file() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert pidfile.is_file(), "the restart never reached a bound server"
+        assert "already running at" not in output.getvalue()
+    finally:
+        launcher.stop_server()
+        thread2.join(timeout=5)
+    assert not thread2.is_alive()
