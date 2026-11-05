@@ -1,4 +1,16 @@
-"""Strict matrix loading and automatic SigProfiler context detection."""
+"""Strict matrix loading and automatic SigProfiler context detection.
+
+Uploaded matrices are validated once by streaming through the file with
+csv.reader directly off an open file handle (never reading the whole file
+into one decoded string, nor materializing a list of every row, nor a
+tuple of every cell's float value) and then read again, lazily, one sample
+at a time, on each later render request. SigProfilerPlotting's own largest
+matrix shape, SBS4608, can realistically have on the order of 50,000
+sample columns; holding a Python float for every cell of every sample at
+once (hundreds of millions of floats, several times over while parsing)
+is not something an ordinary laptop should be asked to do just to upload
+the file and look at one sample's plot.
+"""
 
 from __future__ import annotations
 
@@ -32,7 +44,17 @@ class MatrixData:
     context: str
     labels: tuple[str, ...]
     columns: tuple[str, ...]
-    values: tuple[tuple[float, ...], ...]
+    # Exactly one of these two is set, never both:
+    # - `values`: the whole matrix already in memory (small test fixtures
+    #   built directly in Python, and the pandas-DataFrame input path,
+    #   which is already fully in memory as numpy arrays before it ever
+    #   reaches here -- there is no streaming benefit left to capture).
+    # - `_source_path`/`_delimiter`: every uploaded file actually ends up
+    #   here (see load_matrix/_load_from_path) -- sample_values() re-reads
+    #   just the one requested column from disk instead.
+    values: tuple[tuple[float, ...], ...] | None = None
+    _source_path: Path | None = None
+    _delimiter: str = "\t"
 
     def sample_values(self, sample: str) -> list[float]:
         try:
@@ -42,7 +64,24 @@ class MatrixData:
                 f"Unknown sample/signature {sample!r}. Choose one of: "
                 + ", ".join(self.columns)
             ) from exc
-        return [row[index] for row in self.values]
+        if self.values is not None:
+            return [row[index] for row in self.values]
+        return self._read_column_from_disk(index)
+
+    def _read_column_from_disk(self, index: int) -> list[float]:
+        # Already fully validated once, at upload time (see
+        # _load_from_path) -- this re-read trusts the file and only
+        # converts the one column actually requested, so peak memory here
+        # is proportional to one row's width, not the whole matrix.
+        by_label: dict[str, float] = {}
+        with open(self._source_path, encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle, delimiter=self._delimiter)
+            next(reader, None)  # header
+            for row in reader:
+                if not row or all(not str(cell).strip() for cell in row):
+                    continue
+                by_label[row[0].strip()] = float(row[index + 1])
+        return [by_label[label] for label in self.labels]
 
     def raw4608(self, sample: str) -> list[dict[str, object]]:
         return [
@@ -124,14 +163,18 @@ def detect_context(labels: Iterable[str]) -> str:
 
 
 def _decode(source) -> tuple[list[list[str]], str]:
+    """Fully materialize a bytes/file-object source as a list of rows.
+
+    Only reached for sources that are already fully in memory by the time
+    the caller has them (``bytes``, or a file-like object whose ``.read()``
+    the caller already chose to call) -- there is no streaming benefit to
+    chase here, so this keeps the simple, original, eager behavior. A real
+    uploaded file always arrives as a path instead (see
+    ``_materialize_source``/``_load_from_path``), which is what actually
+    needs -- and gets -- the memory-bounded treatment.
+    """
     name = getattr(source, "name", "uploaded matrix")
-    if isinstance(source, (str, Path)):
-        path = Path(source).expanduser()
-        if not path.is_file():
-            raise MatrixError(f"Matrix file does not exist: {path}")
-        raw = path.read_bytes()
-        name = str(path)
-    elif isinstance(source, bytes):
+    if isinstance(source, bytes):
         raw = source
     elif hasattr(source, "read"):
         raw = source.read()
@@ -179,18 +222,12 @@ def _from_dataframe(frame) -> tuple[list[list[object]], str]:
     return rows, "DataFrame"
 
 
-def load_matrix(source) -> MatrixData:
-    """Load a file/bytes/file-object or pandas DataFrame and validate all cells."""
-    if hasattr(source, "columns") and hasattr(source, "iloc"):
-        rows, name = _from_dataframe(source)
-    else:
-        rows, name = _decode(source)
-    if not rows:
-        raise MatrixError(f"{name} is empty.")
-    width = len(rows[0])
+def _validate_header(header: list[str]) -> list[str]:
+    """Shared header checks for both the eager and streaming loaders.
+    Returns the sample/signature column names."""
+    width = len(header)
     if width < 2:
         raise MatrixError("The header must contain a context column and at least one sample/signature.")
-    header = [str(value).strip() for value in rows[0]]
     if header[0].lower() not in MUTATION_TYPE_HEADER_ALIASES:
         raise MatrixError(
             "The first column must identify mutation contexts (MutationType, Mutation Types, "
@@ -202,6 +239,24 @@ def load_matrix(source) -> MatrixData:
     if len(set(columns)) != len(columns):
         duplicate = next(c for c in columns if columns.count(c) > 1)
         raise MatrixError(f"Duplicate sample/signature column {duplicate!r}; names must be unique.")
+    return columns
+
+
+def _canonical_order(context: str, labels: list[str]) -> tuple[str, ...]:
+    order = {label: i for i, label in enumerate(REFERENCE_CONTEXTS[context])}
+    return tuple(sorted(labels, key=lambda label: order[label]))
+
+
+def _load_from_rows(rows: list[list], name: str) -> MatrixData:
+    """Build a fully in-memory MatrixData from an already-materialized list
+    of rows (the DataFrame and bytes/file-object input paths -- both are
+    already fully in memory before reaching this function, so there is no
+    streaming benefit to chase here)."""
+    if not rows:
+        raise MatrixError(f"{name} is empty.")
+    header = [str(value).strip() for value in rows[0]]
+    width = len(header)
+    columns = _validate_header(header)
 
     labels: list[str] = []
     values: list[tuple[float, ...]] = []
@@ -245,3 +300,113 @@ def load_matrix(source) -> MatrixData:
         columns=tuple(columns),
         values=tuple(pair[1] for pair in sorted_rows),
     )
+
+
+def _load_from_path(path: Path, name: str) -> MatrixData:
+    """Validate every cell by streaming through `path` with csv.reader
+    directly off the open file handle -- never reading the whole file into
+    one decoded string, a list of every row, or a tuple of every cell's
+    float value. The returned MatrixData reads lazily from this same path
+    afterward (MatrixData._read_column_from_disk), one sample at a time,
+    which is the only part of this that matters for real SBS4608-scale
+    uploads: a render request only ever pays for the one sample it asked
+    for, never for every other sample sitting unused in the matrix.
+    """
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as probe:
+            first_line = probe.readline()
+    except UnicodeDecodeError as exc:
+        raise MatrixError(f"{name} is not UTF-8 text.") from exc
+    if not first_line.strip():
+        raise MatrixError(f"{name} is empty.")
+    delimiter = "\t" if "\t" in first_line else "," if "," in first_line else None
+    if delimiter is None:
+        raise MatrixError(
+            "The matrix must be tab-delimited (preferred) or comma-delimited with a header row."
+        )
+
+    labels: list[str] = []
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle, delimiter=delimiter)
+            try:
+                header = next(reader)
+            except StopIteration:
+                raise MatrixError(f"{name} is empty.")
+            header = [str(value).strip() for value in header]
+            width = len(header)
+            columns = _validate_header(header)
+
+            for line_number, row in enumerate(reader, 2):
+                if not row or all(str(cell).strip() == "" for cell in row):
+                    continue
+                if len(row) != width:
+                    raise MatrixError(
+                        f"Line {line_number} has {len(row)} fields; the header has {width}. "
+                        "Check for missing values or stray delimiters."
+                    )
+                label = str(row[0]).strip()
+                if not label:
+                    raise MatrixError(f"Line {line_number} has an empty mutation context.")
+                for column, cell in zip(columns, row[1:]):
+                    text = str(cell).strip()
+                    try:
+                        number = float(text)
+                    except (TypeError, ValueError) as exc:
+                        raise MatrixError(
+                            f"Non-numeric value {text!r} at line {line_number}, column {column!r}."
+                        ) from exc
+                    if not math.isfinite(number):
+                        raise MatrixError(
+                            f"Value at line {line_number}, column {column!r} must be finite; "
+                            f"got {text!r}."
+                        )
+                    if number < 0:
+                        raise MatrixError(
+                            f"Value at line {line_number}, column {column!r} must be non-negative; "
+                            f"got {text!r}."
+                        )
+                labels.append(label)
+    except UnicodeDecodeError as exc:
+        raise MatrixError(f"{name} is not UTF-8 text.") from exc
+
+    context = detect_context(labels)
+    return MatrixData(
+        context=context,
+        labels=_canonical_order(context, labels),
+        columns=tuple(columns),
+        values=None,
+        _source_path=path,
+        _delimiter=delimiter,
+    )
+
+
+def _materialize_source(source) -> tuple[Path, str]:
+    """A real on-disk path for any (str, Path) source -- the only kind
+    load_matrix now reads with the memory-bounded streaming loader. Raises
+    if the source is anything else so the caller falls back to the eager,
+    already-in-memory path (bytes, file-object, DataFrame)."""
+    path = Path(source).expanduser()
+    if not path.is_file():
+        raise MatrixError(f"Matrix file does not exist: {path}")
+    return path, str(path)
+
+
+def load_matrix(source) -> MatrixData:
+    """Load a file/bytes/file-object or pandas DataFrame and validate all cells.
+
+    A path/str is streamed from disk with bounded memory, regardless of
+    size -- this is what the dashboard's own upload handling always passes
+    (see server.py), by writing the incoming request straight to a temp
+    file rather than holding it in memory. bytes/file-object/DataFrame
+    sources are already fully in memory by the time they reach here, so
+    they use the simpler, original, eager code path unchanged.
+    """
+    if isinstance(source, (str, Path)):
+        path, name = _materialize_source(source)
+        return _load_from_path(path, name)
+    if hasattr(source, "columns") and hasattr(source, "iloc"):
+        rows, name = _from_dataframe(source)
+    else:
+        rows, name = _decode(source)
+    return _load_from_rows(rows, name)

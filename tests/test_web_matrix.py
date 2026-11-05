@@ -86,15 +86,19 @@ def test_nonfinite_value_is_rejected(tmp_path):
 def test_all_zero_matrix_still_loads(tmp_path):
     path = _write(tmp_path / "zero.tsv", SBS6_LABELS, values={label: [0.0] for label in SBS6_LABELS})
     matrix = load_matrix(path)
-    assert all(v == 0.0 for row in matrix.values for v in row)
+    assert all(v == 0.0 for v in matrix.sample_values(matrix.columns[0]))
 
 
 def test_wide_matrix_with_many_sample_columns(tmp_path):
     columns = tuple(f"Sample_{i}" for i in range(200))
-    path = _write(tmp_path / "wide.tsv", SBS6_LABELS, columns=columns)
+    values = {label: [float(i) for i in range(200)] for label in SBS6_LABELS}
+    path = _write(tmp_path / "wide.tsv", SBS6_LABELS, columns=columns, values=values)
     matrix = load_matrix(path)
     assert matrix.columns == columns
-    assert len(matrix.values[0]) == 200
+    # Every one of the 200 columns is independently addressable and lands
+    # on the right value, not just the first/last few.
+    assert matrix.sample_values("Sample_0")[0] == 0.0
+    assert matrix.sample_values("Sample_199")[0] == 199.0
 
 
 def test_unusual_sample_names_are_preserved_verbatim(tmp_path):
@@ -116,7 +120,8 @@ def test_large_sample_count_loads_without_blowing_up(tmp_path):
     path = _write(tmp_path / "large.tsv", SBS6_LABELS, columns=columns)
     matrix = load_matrix(path)
     assert len(matrix.columns) == 2000
-    assert len(matrix.values) == 6
+    assert len(matrix.labels) == 6
+    assert len(matrix.sample_values("S0")) == 6
 
 
 def test_detect_context_reports_ambiguous_matches(monkeypatch):

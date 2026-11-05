@@ -209,7 +209,18 @@ are all rejected with a message naming the exact row or column at fault.
 - **Uploading a large matrix seems slow / shows nothing for a while:** very
   wide matrices (many thousands of samples) take real time to parse and
   upload -- this is normal; the upload has succeeded once the sample list
-  populates. There is no progress bar for the upload itself yet.
+  populates. There is no progress bar for the upload itself yet. The
+  dashboard streams the upload straight to disk and reads each sample
+  lazily on demand rather than holding the whole matrix in memory, so
+  memory use stays flat regardless of how many samples it has -- a
+  real-world test matrix with 10,000 SBS4608 columns (134 MB) added only
+  about 12 MB of memory to upload and parse, and a single sample render
+  added almost none on top of that.
+- **"The upload exceeds the N-byte limit":** uploads are capped (4 GiB by
+  default) as a sanity check against a truly unreasonable file, not a
+  tight budget. Raise it with the `SIGPROFILERPLOTTING_MAX_UPLOAD_BYTES`
+  environment variable (in bytes) before launching if you genuinely need to
+  go higher.
 - **Changes to the package aren't showing up:** run the launcher with
   `--reinstall` to force a fresh dependency install (repository launcher
   scripts only); if you're running the server from a previous launch, stop

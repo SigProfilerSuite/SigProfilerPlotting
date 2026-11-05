@@ -38,16 +38,12 @@ def _connection(server):
     return http.client.HTTPConnection("127.0.0.1", port, timeout=5)
 
 
-def _multipart_body(filename, content):
-    boundary = "----testboundary123"
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="matrix"; filename="{filename}"\r\n'
-        f"Content-Type: text/tab-separated-values\r\n\r\n"
-    ).encode("utf-8")
-    body += content.encode("utf-8")
-    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
-    return body, f"multipart/form-data; boundary={boundary}"
+def _matrix_body(content):
+    # The dashboard's own frontend posts the raw file bytes as the whole
+    # request body (app.js's upload()) -- not multipart/form-data -- so the
+    # server can stream it straight to a temp file without ever parsing a
+    # MIME envelope out of it first.
+    return content.encode("utf-8"), "application/octet-stream"
 
 
 def _sbs6_tsv():
@@ -101,7 +97,7 @@ def test_forged_host_header_is_rejected(running_server):
 
 def test_cross_origin_post_is_rejected(running_server):
     port = running_server.server_address[1]
-    body, content_type = _multipart_body("matrix.tsv", _sbs6_tsv())
+    body, content_type = _matrix_body(_sbs6_tsv())
     conn = _connection(running_server)
     headers = {
         "Content-Type": content_type,
@@ -125,7 +121,7 @@ def test_static_path_traversal_is_rejected(running_server):
 def test_matrix_upload_and_render_round_trip(running_server):
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
-    body, content_type = _multipart_body("matrix.tsv", _sbs6_tsv())
+    body, content_type = _matrix_body(_sbs6_tsv())
 
     conn = _connection(running_server)
     conn.request(
@@ -174,7 +170,7 @@ def test_unexpected_render_error_returns_500_without_dropping_the_connection(run
     monkeypatch.setattr(server_module, "render_sample", _boom)
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
-    body, content_type = _multipart_body("matrix.tsv", _sbs6_tsv())
+    body, content_type = _matrix_body(_sbs6_tsv())
     conn = _connection(running_server)
     conn.request(
         "POST", "/api/matrix", body=body,
@@ -205,7 +201,7 @@ def test_malformed_matrix_upload_returns_actionable_error(running_server):
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
     bad_tsv = "MutationType\tS1\nC>A\tnot-a-number\n"
-    body, content_type = _multipart_body("bad.tsv", bad_tsv)
+    body, content_type = _matrix_body(bad_tsv)
     conn = _connection(running_server)
     conn.request(
         "POST",
@@ -222,6 +218,127 @@ def test_malformed_matrix_upload_returns_actionable_error(running_server):
     payload = json.loads(resp.read())
     assert "error" in payload
     conn.close()
+
+
+def test_upload_with_a_missing_content_length_is_rejected(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _matrix_body(_sbs6_tsv())
+    conn = _connection(running_server)
+    conn.putrequest("POST", "/api/matrix", skip_host=False)
+    conn.putheader("Content-Type", content_type)
+    conn.putheader("Origin", origin)
+    conn.endheaders()
+    conn.send(body)
+    resp = conn.getresponse()
+    assert resp.status == 411
+    conn.close()
+
+
+def test_upload_with_a_negative_content_length_is_rejected(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _matrix_body(_sbs6_tsv())
+    conn = _connection(running_server)
+    conn.putrequest("POST", "/api/matrix", skip_host=False)
+    conn.putheader("Content-Type", content_type)
+    conn.putheader("Content-Length", "-5")
+    conn.putheader("Origin", origin)
+    conn.endheaders()
+    resp = conn.getresponse()
+    assert resp.status == 400
+    conn.close()
+
+
+def test_upload_exceeding_the_configured_size_limit_is_rejected(running_server, monkeypatch):
+    import sigProfilerPlotting.web.server as server_module
+
+    monkeypatch.setattr(server_module, "MAX_UPLOAD_BYTES", 10)
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _matrix_body(_sbs6_tsv())
+    assert len(body) > 10
+    conn = _connection(running_server)
+    conn.request(
+        "POST", "/api/matrix", body=body,
+        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 413
+    conn.close()
+
+    # The server itself must still be alive and answering other requests.
+    conn = _connection(running_server)
+    conn.request("GET", "/")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    resp.read()
+    conn.close()
+
+
+def test_a_failed_upload_does_not_leak_its_temp_file(running_server):
+    import sigProfilerPlotting.web.server as server_module
+
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    bad_tsv = "MutationType\tS1\nC>A\tnot-a-number\n"
+    body, content_type = _matrix_body(bad_tsv)
+
+    captured = {}
+    real_stream = server_module._stream_upload_to_tempfile
+
+    def spy(rfile, length):
+        path = real_stream(rfile, length)
+        captured["path"] = path
+        return path
+
+    server_module._stream_upload_to_tempfile = spy
+    try:
+        conn = _connection(running_server)
+        conn.request(
+            "POST", "/api/matrix", body=body,
+            headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+        )
+        resp = conn.getresponse()
+        assert resp.status == 400
+        resp.read()
+        conn.close()
+    finally:
+        server_module._stream_upload_to_tempfile = real_stream
+
+    assert "path" in captured
+    import os
+
+    assert not os.path.exists(captured["path"])
+
+
+def test_uploading_a_replacement_matrix_cleans_up_the_previous_temp_file(running_server):
+    import os
+
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+
+    def upload(content):
+        body, content_type = _matrix_body(content)
+        conn = _connection(running_server)
+        conn.request(
+            "POST", "/api/matrix", body=body,
+            headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+        )
+        resp = conn.getresponse()
+        assert resp.status == 200
+        resp.read()
+        conn.close()
+
+    upload(_sbs6_tsv())
+    first_tempfile = running_server._matrix_tempfile
+    assert first_tempfile is not None and os.path.exists(first_tempfile)
+
+    upload(_sbs96_tsv())
+    second_tempfile = running_server._matrix_tempfile
+    assert second_tempfile != first_tempfile
+    assert not os.path.exists(first_tempfile)
+    assert os.path.exists(second_tempfile)
 
 
 def test_html_response_carries_a_content_security_policy(running_server):
@@ -363,7 +480,7 @@ def test_cosmic_builds_endpoint_reports_no_builds_without_a_configured_directory
 def test_render_with_compare_cosmic_returns_the_comparison_payload(running_server):
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
-    body, content_type = _multipart_body("matrix.tsv", _sbs96_tsv())
+    body, content_type = _matrix_body(_sbs96_tsv())
 
     conn = _connection(running_server)
     conn.request(
@@ -390,7 +507,7 @@ def test_render_with_compare_cosmic_returns_the_comparison_payload(running_serve
 def test_render_with_an_unknown_cosmic_build_is_rejected(running_server):
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
-    body, content_type = _multipart_body("matrix.tsv", _sbs96_tsv())
+    body, content_type = _matrix_body(_sbs96_tsv())
 
     conn = _connection(running_server)
     conn.request(
