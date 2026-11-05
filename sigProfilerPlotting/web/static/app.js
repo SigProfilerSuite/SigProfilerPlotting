@@ -602,7 +602,16 @@ async function quit() {
   button.disabled = true;
   button.textContent = 'Stopping...';
   try {
-    await fetch('/api/shutdown', { method: 'POST' });
+    let token = '';
+    try {
+      const identity = await (await fetch('/api/identity')).json();
+      token = identity.token || '';
+    } catch (e) {
+      // If /api/identity itself is unreachable the shutdown call below will
+      // fail the same way -- fall through with no token rather than block
+      // the user from even trying to stop the server.
+    }
+    await fetch('/api/shutdown', { method: 'POST', headers: { 'X-Dashboard-Token': token } });
   } catch (e) {
     // The server closes its socket as part of shutting down, so the fetch
     // itself failing (rather than resolving) is the expected success case.

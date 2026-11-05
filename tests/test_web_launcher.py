@@ -1,6 +1,10 @@
+import contextlib
+import io
 import os
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -110,8 +114,9 @@ def test_stop_with_no_pidfile_is_a_clean_noop(tmp_path, monkeypatch, capsys):
 def test_stop_with_a_stale_pidfile_cleans_up_without_error(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
     pidfile = tmp_path / "dashboard.pid"
-    # A pid astronomically unlikely to be a real running process.
-    pidfile.write_text("999999999:51000", encoding="utf-8")
+    # A pid astronomically unlikely to be a real running process, and a port
+    # nothing is listening on -- /api/identity is unreachable either way.
+    pidfile.write_text("999999999:51000:sometoken", encoding="utf-8")
     launcher.stop_server()
     assert not pidfile.exists()
     assert "No running dashboard server found." in capsys.readouterr().out
@@ -126,22 +131,48 @@ def test_stop_with_a_corrupt_pidfile_cleans_up_without_error(tmp_path, monkeypat
     assert "No running dashboard server found." in capsys.readouterr().out
 
 
-def test_stop_terminates_a_real_process_and_removes_pidfile(tmp_path, monkeypatch, capsys):
-    # subprocess.Popen (not os.fork directly) to avoid the known
-    # fork()-in-a-multithreaded-process hazard inside a pytest run.
+def test_stop_terminates_a_real_dashboard_and_removes_pidfile(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
-    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    from sigProfilerPlotting.web.server import make_server
+
+    server = make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
     pidfile = tmp_path / "dashboard.pid"
-    pidfile.write_text(f"{process.pid}:51000", encoding="utf-8")
+    pidfile.write_text(f"{os.getpid()}:{port}:{server.instance_token}", encoding="utf-8")
     try:
         launcher.stop_server()
         assert not pidfile.exists()
-        assert f"Stopped dashboard server (pid {process.pid})" in capsys.readouterr().out
-        assert process.wait(timeout=5) is not None
+        assert f"Stopped dashboard server (pid {os.getpid()})" in capsys.readouterr().out
+        thread.join(timeout=5)
+        assert not thread.is_alive()
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+        if thread.is_alive():
+            server.shutdown()
+        server.server_close()
+
+
+def test_stop_does_not_kill_an_unrelated_process_named_by_a_stale_pidfile(
+    tmp_path, monkeypatch, capsys
+):
+    # The exact scenario plotting_A's review flagged: a pidfile naming a
+    # real, live, but completely unrelated process (not a dashboard at all --
+    # nothing is even listening on the recorded port). stop_server() must
+    # never signal a PID solely because a file names it; it must verify via
+    # /api/identity first and, finding nothing there, leave the process alone.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    pidfile = tmp_path / "dashboard.pid"
+    pidfile.write_text(f"{process.pid}:51000:not-the-real-token", encoding="utf-8")
+    try:
+        launcher.stop_server()
+        assert not pidfile.exists()
+        assert "No running dashboard server found." in capsys.readouterr().out
+        assert process.poll() is None, "an unrelated live process must never be signaled"
+    finally:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def test_managed_main_stop_short_circuits_before_ensure_dependencies(monkeypatch):
@@ -173,27 +204,47 @@ def test_running_dashboard_url_is_none_without_a_pidfile(tmp_path):
     assert launcher._running_dashboard_url(tmp_path / "dashboard.pid") is None
 
 
-def test_running_dashboard_url_reports_a_live_process(tmp_path, monkeypatch):
+def test_running_dashboard_url_reports_a_verified_live_dashboard(tmp_path, monkeypatch):
     pidfile = tmp_path / "dashboard.pid"
-    pidfile.write_text("4242:51000", encoding="utf-8")
-    monkeypatch.setattr(launcher, "_is_process_alive", lambda pid: pid == 4242)
+    pidfile.write_text("4242:51000:thetoken", encoding="utf-8")
+    monkeypatch.setattr(
+        launcher, "_verify_identity", lambda pid, port, token: (pid, port, token) == (4242, 51000, "thetoken")
+    )
     assert launcher._running_dashboard_url(pidfile) == "http://127.0.0.1:51000/"
-    assert pidfile.exists()  # a live process's pidfile is left alone
+    assert pidfile.exists()  # a verified-live dashboard's pidfile is left alone
 
 
-def test_running_dashboard_url_cleans_up_a_dead_pid(tmp_path, monkeypatch):
+def test_running_dashboard_url_cleans_up_when_identity_cannot_be_verified(tmp_path, monkeypatch):
     pidfile = tmp_path / "dashboard.pid"
-    pidfile.write_text("4242:51000", encoding="utf-8")
-    monkeypatch.setattr(launcher, "_is_process_alive", lambda pid: False)
+    pidfile.write_text("4242:51000:thetoken", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_verify_identity", lambda pid, port, token: False)
     assert launcher._running_dashboard_url(pidfile) is None
     assert not pidfile.exists()
+
+
+def test_verify_identity_rejects_a_token_mismatch(tmp_path, monkeypatch):
+    from sigProfilerPlotting.web.server import make_server
+
+    server = make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        assert launcher._verify_identity(os.getpid(), port, server.instance_token) is True
+        assert launcher._verify_identity(os.getpid(), port, "wrong-token") is False
+        assert launcher._verify_identity(999999999, port, server.instance_token) is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_run_server_refuses_a_second_instance_without_touching_the_pidfile(
     tmp_path, monkeypatch, capsys
 ):
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
     pidfile = tmp_path / "dashboard.pid"
-    pidfile.write_text("4242:51000", encoding="utf-8")  # a "live" first instance
+    pidfile.write_text("4242:51000:thetoken", encoding="utf-8")  # a "live" first instance
     monkeypatch.setattr(launcher, "_pidfile", lambda: pidfile)
     monkeypatch.setattr(launcher, "_running_dashboard_url", lambda p: "http://127.0.0.1:51000/")
 
@@ -210,4 +261,58 @@ def test_run_server_refuses_a_second_instance_without_touching_the_pidfile(
     assert "already running at http://127.0.0.1:51000/" in out
     # The original instance's record must survive untouched -- this is
     # exactly what the reported bug overwrote.
-    assert pidfile.read_text(encoding="utf-8") == "4242:51000"
+    assert pidfile.read_text(encoding="utf-8") == "4242:51000:thetoken"
+
+
+def test_acquire_startup_lock_is_exclusive_until_released(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    held = launcher._acquire_startup_lock(timeout=0.2)
+    assert held is not None
+    assert launcher._acquire_startup_lock(timeout=0.2) is None  # already held
+    held.unlink()
+    reacquired = launcher._acquire_startup_lock(timeout=0.2)
+    assert reacquired is not None
+    reacquired.unlink()
+
+
+def test_acquire_startup_lock_recovers_from_a_stale_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    lock_path = tmp_path / "dashboard.lock"
+    lock_path.write_text("999999999", encoding="utf-8")  # holder is not alive
+    acquired = launcher._acquire_startup_lock(timeout=1.0)
+    assert acquired is not None
+    acquired.unlink()
+
+
+def test_concurrent_launches_leave_exactly_one_managed_server(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    # signal.signal() only works on the process's main thread; _run_server
+    # normally only ever runs there (one launcher per process). Running it on
+    # a background thread here, just to simulate two racing launches, would
+    # otherwise raise ValueError on this call -- stub it out instead.
+    monkeypatch.setattr(launcher.signal, "signal", lambda *a, **k: None)
+    pidfile = tmp_path / "dashboard.pid"
+
+    first_output = io.StringIO()
+
+    def run_first():
+        with contextlib.redirect_stdout(first_output):
+            launcher._run_server(no_launch=True)
+
+    thread1 = threading.Thread(target=run_first, daemon=True)
+    thread1.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not pidfile.is_file() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert pidfile.is_file(), "the first launch never reached a bound server"
+
+        second_output = io.StringIO()
+        with contextlib.redirect_stdout(second_output):
+            launcher._run_server(no_launch=True)
+        assert "already running at" in second_output.getvalue()
+    finally:
+        launcher.stop_server()
+        thread1.join(timeout=5)
+    assert not thread1.is_alive()
+    assert "already running at" not in first_output.getvalue()

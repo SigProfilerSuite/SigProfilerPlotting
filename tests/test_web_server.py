@@ -238,6 +238,41 @@ def test_shutdown_requires_matching_origin(running_server):
     conn.close()
 
 
+def test_identity_endpoint_reports_pid_and_token(running_server):
+    import os
+
+    conn = _connection(running_server)
+    conn.request("GET", "/api/identity")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    body = json.loads(resp.read())
+    assert body["pid"] == os.getpid()
+    assert isinstance(body["token"], str) and len(body["token"]) >= 16
+    conn.close()
+
+
+def test_shutdown_requires_matching_token(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    conn = _connection(running_server)
+    conn.request(
+        "POST", "/api/shutdown", body=b"",
+        headers={"Content-Length": "0", "Origin": origin, "X-Dashboard-Token": "wrong-token"},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 403
+    resp.read()
+    conn.close()
+
+    # Rejected shutdown must not actually stop the server.
+    conn = _connection(running_server)
+    conn.request("GET", "/")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    resp.read()
+    conn.close()
+
+
 def test_quit_button_shuts_down_the_running_server():
     # Exercises the real lifecycle the "Quit" button drives: a same-origin
     # POST to /api/shutdown must make serve_forever() actually return, the
@@ -250,9 +285,14 @@ def test_quit_button_shuts_down_the_running_server():
         port = server.server_address[1]
         origin = f"http://127.0.0.1:{port}"
         conn = _connection(server)
+        conn.request("GET", "/api/identity")
+        token = json.loads(conn.getresponse().read())["token"]
+        conn.close()
+
+        conn = _connection(server)
         conn.request(
             "POST", "/api/shutdown", body=b"",
-            headers={"Content-Length": "0", "Origin": origin},
+            headers={"Content-Length": "0", "Origin": origin, "X-Dashboard-Token": token},
         )
         resp = conn.getresponse()
         assert resp.status == 200
