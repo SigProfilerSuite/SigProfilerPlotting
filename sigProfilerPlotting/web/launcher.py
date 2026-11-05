@@ -34,10 +34,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import signal
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -111,15 +115,27 @@ def _pidfile() -> Path:
     return _state_dir() / "dashboard.pid"
 
 
-def _read_pidfile(pidfile: Path) -> tuple[int, int] | None:
-    """Return (pid, port) from the pidfile, or None if it's absent/unparseable."""
+def _lockfile() -> Path:
+    return _state_dir() / "dashboard.lock"
+
+
+def _read_pidfile(pidfile: Path) -> tuple[int, int, str] | None:
+    """Return (pid, port, token) from the pidfile, or None if absent/unparseable."""
     if not pidfile.is_file():
         return None
     try:
-        pid_text, port_text = pidfile.read_text(encoding="utf-8").strip().split(":", 1)
-        return int(pid_text), int(port_text)
+        pid_text, port_text, token = pidfile.read_text(encoding="utf-8").strip().split(":", 2)
+        return int(pid_text), int(port_text), token
     except (OSError, ValueError):
         return None
+
+
+def _write_pidfile_atomic(pidfile: Path, pid: int, port: int, token: str) -> None:
+    # Write-then-rename is atomic on POSIX and Windows alike, so a concurrent
+    # reader never observes a half-written pidfile.
+    tmp = pidfile.with_name(pidfile.name + f".tmp{pid}")
+    tmp.write_text(f"{pid}:{port}:{token}", encoding="utf-8")
+    os.replace(tmp, pidfile)
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -132,20 +148,76 @@ def _is_process_alive(pid: int) -> bool:
     return True
 
 
+def _fetch_identity(port: int, timeout: float = 1.0) -> dict | None:
+    """GET /api/identity on a candidate dashboard, or None if unreachable/invalid."""
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/identity", timeout=timeout
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _verify_identity(pid: int, port: int, token: str) -> bool:
+    """Confirm the process actually listening on ``port`` is *this* dashboard.
+
+    A pidfile naming a live PID is not proof by itself -- the PID could have
+    been reused by an unrelated process, or the port taken over by something
+    else entirely. The dashboard's own loopback-only ``/api/identity``
+    endpoint echoes back its real PID and a random per-launch token minted at
+    startup; both must match what the pidfile recorded before we ever trust
+    it enough to reuse or stop it.
+    """
+    identity = _fetch_identity(port)
+    return bool(identity) and identity.get("pid") == pid and identity.get("token") == token
+
+
 def _running_dashboard_url(pidfile: Path) -> str | None:
     """URL of an already-running dashboard, or None if none is live.
 
-    As a side effect, removes the pidfile if it names a process that is no
-    longer running (so the caller can safely claim it next).
+    As a side effect, removes the pidfile if it does not name a dashboard
+    that is verifiably still running under that exact pid/port/token triple
+    (so the caller can safely claim the pidfile next).
     """
     existing = _read_pidfile(pidfile)
     if existing is None:
         return None
-    pid, port = existing
-    if _is_process_alive(pid):
+    pid, port, token = existing
+    if _verify_identity(pid, port, token):
         return f"http://127.0.0.1:{port}/"
     pidfile.unlink(missing_ok=True)
     return None
+
+
+def _acquire_startup_lock(timeout: float = 5.0) -> Path | None:
+    """Atomically claim the right to check-and-start a dashboard.
+
+    ``os.open`` with ``O_CREAT | O_EXCL`` is an atomic test-and-set on both
+    POSIX and Windows, so two launchers racing to start at the same instant
+    converge on exactly one of them doing the check-then-write sequence in
+    :func:`_run_server`; the loser waits (or gives up) instead of each
+    independently deciding no dashboard exists yet and both binding a server.
+    """
+    lock_path = _lockfile()
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            return lock_path
+        except FileExistsError:
+            try:
+                holder_pid = int(lock_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                holder_pid = None
+            if holder_pid is None or not _is_process_alive(holder_pid):
+                lock_path.unlink(missing_ok=True)
+                continue
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.05)
 
 
 def stop_server() -> None:
@@ -155,37 +227,59 @@ def stop_server() -> None:
         pidfile.unlink(missing_ok=True)
         print("No running dashboard server found.", flush=True)
         return
-    pid, _port = existing
-    try:
-        os.kill(pid, signal.SIGTERM)
-        print(f"Stopped dashboard server (pid {pid}).", flush=True)
-    except ProcessLookupError:
+    pid, port, token = existing
+    if not _verify_identity(pid, port, token):
+        # The pidfile does not name a verifiable dashboard -- it is stale
+        # (process exited) or the pid/port has been reused by something
+        # else. Never signal a PID solely because it appears in a file.
+        pidfile.unlink(missing_ok=True)
         print("No running dashboard server found.", flush=True)
-    except PermissionError:
-        print(f"Could not stop process {pid}: permission denied.", flush=True)
+        return
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/shutdown",
+            data=b"{}",
+            method="POST",
+            headers={
+                "Origin": f"http://127.0.0.1:{port}",
+                "Content-Type": "application/json",
+                "X-Dashboard-Token": token,
+            },
+        )
+        urllib.request.urlopen(request, timeout=5.0)
+        print(f"Stopped dashboard server (pid {pid}).", flush=True)
+    except (OSError, urllib.error.HTTPError) as exc:
+        print(f"Could not stop the dashboard server: {exc}", flush=True)
     finally:
-        # The stopper (not the stopped process) owns pidfile cleanup: on
-        # Windows, os.kill(..., SIGTERM) maps to TerminateProcess, which kills
-        # the target immediately without running its own cleanup code.
         pidfile.unlink(missing_ok=True)
 
 
 def _run_server(no_launch: bool) -> None:
     pidfile = _pidfile()
-    existing_url = _running_dashboard_url(pidfile)
-    if existing_url is not None:
-        # Judgment call: refuse rather than stop-and-restart, even under
-        # --reinstall -- a double-click/double-run should never silently
-        # kill a dashboard the user (or another tab) may be using.
-        print(f"SigProfilerPlotting dashboard is already running at {existing_url}", flush=True)
-        print("Run with --stop first if you want to restart it.", flush=True)
+    lock_path = _acquire_startup_lock()
+    if lock_path is None:
+        print(
+            "Another dashboard launch is already in progress; try again in a moment.",
+            flush=True,
+        )
         return
+    try:
+        existing_url = _running_dashboard_url(pidfile)
+        if existing_url is not None:
+            # Judgment call: refuse rather than stop-and-restart, even under
+            # --reinstall -- a double-click/double-run should never silently
+            # kill a dashboard the user (or another tab) may be using.
+            print(f"SigProfilerPlotting dashboard is already running at {existing_url}", flush=True)
+            print("Run with --stop first if you want to restart it.", flush=True)
+            return
 
-    from .server import make_server  # deferred: requires the package to be importable
+        from .server import make_server  # deferred: requires the package to be importable
 
-    server = make_server("127.0.0.1", 0)
-    port = server.server_address[1]
-    pidfile.write_text(f"{os.getpid()}:{port}", encoding="utf-8")
+        server = make_server("127.0.0.1", 0)
+        port = server.server_address[1]
+        _write_pidfile_atomic(pidfile, os.getpid(), port, server.instance_token)
+    finally:
+        lock_path.unlink(missing_ok=True)
 
     def _handle_term(signum, frame):
         raise SystemExit(0)

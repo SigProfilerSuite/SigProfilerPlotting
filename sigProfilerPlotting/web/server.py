@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import re
+import secrets
 import threading
 import traceback
 from email import policy
@@ -54,6 +56,12 @@ class DashboardHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, handler_class):
         super().__init__(server_address, handler_class)
         self.dashboard_matrix = None
+        # A fresh random token per launch -- the launcher's pidfile records
+        # it alongside the pid/port, and treats a pid/port whose live
+        # /api/identity doesn't echo this exact token as unrelated to this
+        # server (stale pidfile, reused pid, or a different process on the
+        # same port), rather than ever trusting the pidfile's pid alone.
+        self.instance_token = secrets.token_hex(16)
 
 
 def make_server(host: str = "127.0.0.1", port: int = 0) -> DashboardHTTPServer:
@@ -164,6 +172,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._serve_render(parse_qs(parsed.query))
             elif path == "/api/cosmic/builds":
                 self._serve_cosmic_builds()
+            elif path == "/api/identity":
+                self._serve_identity()
             else:
                 self._reject(HTTPStatus.NOT_FOUND, "Not found.")
         except BrokenPipeError:
@@ -224,6 +234,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         self._write_json(HTTPStatus.OK, {"builds": cosmic.available_builds()})
 
+    def _serve_identity(self) -> None:
+        # Loopback-only (every GET already passes _check_host()) proof of
+        # which process is actually listening here, and under which launch's
+        # token -- see DashboardHTTPServer.instance_token.
+        self._write_json(
+            HTTPStatus.OK, {"pid": os.getpid(), "token": self.server.instance_token}
+        )
+
     # -- POST ------------------------------------------------------------
     def do_POST(self) -> None:
         if not self._check_host():
@@ -269,6 +287,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _serve_shutdown(self) -> None:
+        # Defense-in-depth alongside the Origin check in _dispatch_post: the
+        # launcher's own --stop only ever calls this once it has separately
+        # verified (via /api/identity) that this exact process holds this
+        # exact token, so a stale/foreign pidfile can never reach here with
+        # a valid token.
+        if self.headers.get("X-Dashboard-Token") != self.server.instance_token:
+            self._reject(HTTPStatus.FORBIDDEN, "Invalid or missing dashboard token.")
+            return
         # ThreadingHTTPServer runs each request on its own worker thread, so
         # it's safe to signal shutdown from here -- but server.shutdown()
         # blocks the calling thread until the serve_forever() loop (running
