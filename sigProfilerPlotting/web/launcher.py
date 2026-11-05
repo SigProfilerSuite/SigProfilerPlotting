@@ -190,6 +190,35 @@ def _running_dashboard_url(pidfile: Path) -> str | None:
     return None
 
 
+def _remove_pidfile_if_matches(pidfile: Path, pid: int, port: int, token: str) -> None:
+    """Delete ``pidfile`` only if it still names this exact pid/port/token.
+
+    A bare ``unlink()`` in a cleanup path is unsafe: between this instance
+    writing its pidfile and reaching cleanup, a *different* instance (a
+    replacement started after this one began shutting down) may have
+    overwritten the pidfile with its own record. Comparing before deleting
+    means an old instance's cleanup can never erase a newer instance's
+    record -- it only ever removes the record it itself wrote.
+    """
+    if _read_pidfile(pidfile) == (pid, port, token):
+        pidfile.unlink(missing_ok=True)
+
+
+def _wait_for_identity_gone(port: int, timeout: float = 5.0) -> None:
+    """Block until ``/api/identity`` on ``port`` stops responding, or timeout.
+
+    A successful shutdown POST only means the request was accepted -- the
+    server may take a moment to unwind ``serve_forever()`` and release the
+    port. Waiting here (bounded) avoids declaring the dashboard stopped,
+    and the pidfile safe to remove, while it may still briefly be live.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _fetch_identity(port) is None:
+            return
+        time.sleep(0.05)
+
+
 def _acquire_startup_lock(timeout: float = 5.0) -> Path | None:
     """Atomically claim the right to check-and-start a dashboard.
 
@@ -220,13 +249,22 @@ def _acquire_startup_lock(timeout: float = 5.0) -> Path | None:
             time.sleep(0.05)
 
 
-def stop_server() -> None:
+def stop_server() -> bool:
+    """Stop the running dashboard, if any. Returns False only on a real failure.
+
+    A missing/stale/unverifiable pidfile is a clean no-op (True) -- there is
+    nothing to stop. Only a verified-live dashboard that fails to actually
+    shut down is a failure (False); in that case the pidfile is deliberately
+    *kept*, since it may still be the only record of a genuinely running
+    server -- erasing it here would let a later launch start a second
+    instance on top of the first.
+    """
     pidfile = _pidfile()
     existing = _read_pidfile(pidfile)
     if existing is None:
         pidfile.unlink(missing_ok=True)
         print("No running dashboard server found.", flush=True)
-        return
+        return True
     pid, port, token = existing
     if not _verify_identity(pid, port, token):
         # The pidfile does not name a verifiable dashboard -- it is stale
@@ -234,7 +272,7 @@ def stop_server() -> None:
         # else. Never signal a PID solely because it appears in a file.
         pidfile.unlink(missing_ok=True)
         print("No running dashboard server found.", flush=True)
-        return
+        return True
     try:
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/api/shutdown",
@@ -247,11 +285,26 @@ def stop_server() -> None:
             },
         )
         urllib.request.urlopen(request, timeout=5.0)
-        print(f"Stopped dashboard server (pid {pid}).", flush=True)
     except (OSError, urllib.error.HTTPError) as exc:
-        print(f"Could not stop the dashboard server: {exc}", flush=True)
+        print(
+            f"Could not stop the dashboard server: {exc} "
+            "(it may still be running -- the pidfile has been kept; try again).",
+            flush=True,
+        )
+        return False
+
+    _wait_for_identity_gone(port)
+    # Coordinate with the startup lock so a launch racing this cleanup can
+    # never observe a half-stopped server as "nothing running" before this
+    # pidfile removal (or its own replacement write) has settled.
+    lock_path = _acquire_startup_lock()
+    try:
+        _remove_pidfile_if_matches(pidfile, pid, port, token)
     finally:
-        pidfile.unlink(missing_ok=True)
+        if lock_path is not None:
+            lock_path.unlink(missing_ok=True)
+    print(f"Stopped dashboard server (pid {pid}).", flush=True)
+    return True
 
 
 def _run_server(no_launch: bool, cosmic_dir: str | None = None) -> None:
@@ -282,7 +335,8 @@ def _run_server(no_launch: bool, cosmic_dir: str | None = None) -> None:
 
         server = make_server("127.0.0.1", 0)
         port = server.server_address[1]
-        _write_pidfile_atomic(pidfile, os.getpid(), port, server.instance_token)
+        token = server.instance_token
+        _write_pidfile_atomic(pidfile, os.getpid(), port, token)
     finally:
         lock_path.unlink(missing_ok=True)
 
@@ -303,7 +357,16 @@ def _run_server(no_launch: bool, cosmic_dir: str | None = None) -> None:
         pass
     finally:
         server.server_close()
-        pidfile.unlink(missing_ok=True)
+        # Compare-and-delete, under the startup lock: a replacement instance
+        # may have already written its own pid/port/token into this pidfile
+        # (e.g. it started right after this server began shutting down but
+        # before this `finally` ran) -- this must never delete that record.
+        cleanup_lock = _acquire_startup_lock()
+        try:
+            _remove_pidfile_if_matches(pidfile, os.getpid(), port, token)
+        finally:
+            if cleanup_lock is not None:
+                cleanup_lock.unlink(missing_ok=True)
 
 
 def _build_parser(prog: str) -> argparse.ArgumentParser:
@@ -344,8 +407,7 @@ def managed_main(argv: list[str] | None = None) -> int:
     """Entry point for the venv-managed flow (the launcher shell scripts)."""
     args = _build_parser("sigProfilerPlotting dashboard launcher").parse_args(argv)
     if args.stop:
-        stop_server()
-        return 0
+        return 0 if stop_server() else 1
     if args.ensure_deps_only:
         ensure_dependencies(_repo_root(), force=args.reinstall)
         return 0
@@ -363,8 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = _build_parser("sigprofilerplotting-web").parse_args(argv)
     if args.stop:
-        stop_server()
-        return 0
+        return 0 if stop_server() else 1
     if args.reinstall:
         print(
             "--reinstall has no effect for the installed console command; "
