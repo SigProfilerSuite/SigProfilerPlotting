@@ -1,9 +1,27 @@
 # SigProfilerPlotting #
 ----------
 
-SigProfilerPlotting provides a standard tool for displaying all types of mutational signatures as well as all types of mutational patterns in cancer genomes. The tool seamlessly integrates with other SigProfiler tools.
+SigProfilerPlotting provides a standard tool for displaying mutational
+signatures and mutational patterns in cancer genomes. It integrates with the
+other SigProfiler tools and accepts their tabular matrix outputs.
 
-The SigProfilerPlotting library can be found on github [here][2].
+## Current capabilities
+
+- Static SBS, DBS, ID, CNV, and SV plots, including SBS4608 and the ID89 and
+  ID476 indel schemes.
+- A dedicated SBS4608 interactive HTML report and portable multi-page PDF.
+- A local interactive dashboard with search, sample/signature selection,
+  counts/percentage/proportion controls, Plotly export, and optional COSMIC
+  comparison using a user-supplied authorized catalogue.
+- One-click dashboard launchers for macOS, Linux, and Windows.
+- Combined sample portraits assembled from SBS, DBS, and ID matrices.
+
+Start with the [Python installation guide](Installation-Python.md), then see
+[Plotting Substitutions](Plotting-Substitutions.md),
+[Plotting ID89/ID476](Plotting-ID89-ID476.md), or the
+[Interactive Dashboard](Plotting-Dashboard.md).
+
+The SigProfilerPlotting library can be found on GitHub [here][2].
 The [README.md][3] file provides a great overview if you already have python and pip installed on your computer. For users that prefer working in an R environment, we provide an R wrapper (SigProfilerPlottingR) that can be found on github [here][12].
 
 ## Citation ##
@@ -24,17 +42,18 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 ## Contact ##
 
-Please address any queries or bug reports to Erik Bergstrom at ebergstr@eng.ucsd.edu
+Please address any queries or bug reports to S M Ashiqul Islam at
+sislam6@albany.edu.
 
   [1]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73d34f8d5d98001a393840?mode=render
-  [2]: https://github.com/AlexandrovLab/SigProfilerPlotting
-  [3]: https://github.com/AlexandrovLab/SigProfilerPlotting/blob/master/README.md
+  [2]: https://github.com/SigProfilerSuite/SigProfilerPlotting
+  [3]: https://github.com/SigProfilerSuite/SigProfilerPlotting/blob/master/README.md
   [4]: https://realpython.com/installing-python/
   [5]: https://docs.brew.sh/Homebrew-and-Python
   [6]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c6b0c28737a510019aa3e15?mode=render
-  [7]: https://github.com/AlexandrovLab/SigProfilerPlotting
+  [7]: https://github.com/SigProfilerSuite/SigProfilerPlotting
   [8]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c5de3d676653c0018270138?mode=render
   [9]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73d2c482a3950017d09b92?mode=render
   [10]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73c72862c82a0019dae02f?mode=render
   [11]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73c7eb82a3950018cbfddc?mode=render
-  [12]: https://github.com/AlexandrovLab/SigProfilerPlottingR
+  [12]: https://github.com/SigProfilerSuite/SigProfilerPlottingR

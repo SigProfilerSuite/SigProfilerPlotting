@@ -7,7 +7,7 @@
 SigProfilerPlottingR requires that you have:
 <ul>
     <li>Internet Connection</li>
-    <li>Python version 3.4.0 or newer</li>
+    <li>Python version 3.9 or newer</li>
     <li>SigProfilerMatrixGeneratorR (recommended)</li>
 </ul>
 
@@ -19,9 +19,9 @@ Check that you have the required python version by opening Terminal (`⌘ + Spac
 You should see an output similar to:
 
     ~ python3 --version
-    Python 3.4.0
+    Python 3.12.0
 
-If you do not get a similar output (or a version that is 3.4.0 or newer), you will need to [install python3][1] before continuing with this guide.
+If you do not get a similar output (or a version that is 3.9 or newer), you will need to [install python3][1] before continuing with this guide.
 
 Next you will want to make sure that you have `pip3` installed because it will be used for importing sigProfilerPlotting. Check that you have `pip3` installed by entering into terminal:
 
@@ -62,7 +62,7 @@ Now you are ready to install SigProfilerPlottingR:
     >> use_python("path_to_your_python3")
     >> py_config()
     >> library("devtools")
-    >> install_github("AlexandrovLab/SigProfilerPlottingR")
+    >> install_github("SigProfilerSuite/SigProfilerPlottingR")
 
 Ensure that you can properly load the package:
 
