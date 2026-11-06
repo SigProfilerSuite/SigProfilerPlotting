@@ -15,7 +15,7 @@ For users that prefer working in an R environment, a wrapper package is provided
 
 The framework is written in PYTHON, however, it also requires the following software with the given versions (or newer):
 
-  * PYTHON          version 3.4 or newer
+  * PYTHON          version 3.9 or newer
   * SigProfilerMatrixGenerator (recommended)
 
 **QUICK START GUIDE**
@@ -59,6 +59,23 @@ sigPlt.plotID(matrix_path, output_path, project, plot_type, percentage=False)
 
 ```
 
+### Supported plots
+
+| Mutation class | Function | Supported contexts |
+| --- | --- | --- |
+| Single-base substitutions | `plotSBS()` | SBS6, SBS24, SBS96, SBS192/384, SBS288, SBS1536, SBS4608 |
+| Double-base substitutions | `plotDBS()` | DBS78 and DBS186/312 |
+| Small insertions/deletions | `plotID()` | ID28, ID83, ID89, ID476, ID415 |
+| Copy-number alterations | `plotCNV()` | CNV48 |
+| Structural variants | `plotSV()` | SV32 |
+| Combined sample summary | `samplePortrait()` | SBS, DBS, and ID matrices for one project |
+
+The local interactive dashboard recognizes the complete matrix definitions
+shipped in `sigProfilerPlotting/reference_formats`. It has dedicated layouts
+for SBS96, SBS288, SBS1536, SBS4608, DBS78, ID83, ID89, ID476, CNV48, and
+SV32, and a generic interactive layout for the remaining recognized
+contexts. See [Interactive Dashboard](docs/Plotting-Dashboard.md).
+
 ## SBS4608 plotting
 
 Strand-tagged pentanucleotide matrices can be rendered as a self-contained
@@ -86,10 +103,13 @@ sigPlt.plotSBS(
 ```
 
 `plotInteractive()` embeds Plotly in the HTML file, so the report works
-offline. The static `plotSBS(..., "4608", ...)` path uses Kaleido and
-requires a local Chrome or Chromium installation; run `plotly_get_chrome` if
-Kaleido cannot find one. See [Plotting SBS4608](docs/Plotting-SBS4608.md) for
-the full parameter list (including `percentage`, `signatures`, and the
+offline. The static `plotSBS(..., "4608", ...)` path renders each page as a
+validated high-resolution raster before assembling the PDF, avoiding
+renderer-dependent clipping. It uses Kaleido and requires a local Chrome or
+Chromium installation; run `plotly_get_chrome` if Kaleido cannot find one.
+There is no separate `plotStatic()` API. See
+[Plotting SBS4608](docs/Plotting-SBS4608.md) for the full parameter list
+(including `percentage`, `signatures`, and the
 `custom_text_upper`/`middle`/`bottom` annotations).
 
 ## ID89 and ID476 (Koh et al.) indel plotting
@@ -195,6 +215,17 @@ the server is ready. To stop it, press `Ctrl+C` in that terminal, click the
 
 See the [full dashboard documentation](https://sigprofilersuite.github.io/SigProfilerPlotting/Plotting-Dashboard.html)
 for every command-line flag, supported mutation contexts, and troubleshooting.
+
+## Release and publication
+
+Package versions are derived from Git tags through `setuptools-scm`. A
+maintainer can run the **Create version tag** GitHub Actions workflow with an
+`x.y.z` version and target branch. The resulting `vX.Y.Z` tag builds and
+checks the source/wheel distributions and publishes them to TestPyPI through
+trusted publishing. Publishing the corresponding GitHub Release runs the
+same verified build and publishes it to PyPI. See
+[Release and publication](docs/Release-and-Publication.md) for the complete
+checklist and required GitHub/PyPI environments.
 
 **EXAMPLE**
 

@@ -7,7 +7,7 @@
 SigProfilerPlotting requires that you have:
 <ul>
     <li>Internet Connection</li>
-    <li>Python version 3.4.0 or newer</li>
+    <li>Python version 3.9 or newer</li>
     <li>SigProfilerMatrixGenerator (recommended)</li>
 </ul>
 
@@ -19,9 +19,9 @@ Check that you have the required python version by opening Terminal (`⌘ + Spac
 You should see an output similar to:
 
     ~ python3 --version
-    Python 3.4.0
+    Python 3.12.0
 
-If you do not get a similar output (or a version that is 3.4.0 or newer), you will need to [install python3][1] before continuing with this guide.
+If you do not get a similar output (or a version that is 3.9 or newer), you will need to [install python3][1] before continuing with this guide.
 
 Next you will want to make sure that you have `pip3` installed because it will be used for importing sigProfilerPlotting. Check that you have `pip3` installed by entering into terminal:
 
@@ -62,7 +62,7 @@ If you have Python installed, you should receive an output similar to:
     Type "help", "copyright", "credits" or "license" for more information.
     >>>
 
-If you do not have python, or need Python 3.4.0 or newer, then [download Python here][3].
+If you do not have Python, or need Python 3.9 or newer, then [download Python here][3].
 
 After downloading and installing Python, fill in your username at `YourUsernameHere` and run: 
 
