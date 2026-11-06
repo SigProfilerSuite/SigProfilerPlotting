@@ -86,6 +86,19 @@ sigPlt.plotStatic(
 offline. `plotStatic()` uses Kaleido and requires a local Chrome or Chromium
 installation; run `plotly_get_chrome` if Kaleido cannot find one.
 
+## ID89 and ID476 (Koh et al.) indel plotting
+
+`plotID()` and the interactive dashboard also support the Koh et al. ID89
+(89-category) and ID476 (476-category) indel classification schemes,
+alongside the existing ID83 scheme:
+
+```python
+sigPlt.plotID(matrix_path, output_path, project, "89", percentage=False)  # or "476"
+```
+
+See [Plotting ID89/ID476](docs/Plotting-ID89-ID476.md) for the input format,
+supported output formats, and attribution.
+
 ## Copy Number and Structural Variant Plotting ##
 
 ```python

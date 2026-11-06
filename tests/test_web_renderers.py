@@ -294,6 +294,39 @@ def test_cnv48_renderer_groups_by_cnv_class(tmp_path):
     assert len(groups) > 0
 
 
+def test_id89_renderer_groups_by_koh_category_and_covers_every_row(tmp_path):
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    labels = list(matrix_module.REFERENCE_CONTEXTS["ID89"])
+    path = _write(tmp_path / "id89.tsv", labels)
+    matrix = load_matrix(path)
+    assert matrix.context == "ID89"
+    figure = render_sample(matrix, "S1", unit="counts")
+    groups = {trace["name"] for trace in figure["figure"]["traces"]}
+    assert groups == {
+        "Del 1 C", "Del 1 T (1-4)", "Del 1 T (5-7)", "Del 1 T (8+)",
+        "Ins 1 C", "Ins 1 T (0-4)", "Ins 1 T (5-7)", "Ins 1 T (8+)",
+        "Del >=2", "Ins >=2", "Del Mh", "Complex",
+    }
+    assert sum(len(trace["x"]) for trace in figure["figure"]["traces"]) == len(labels)
+
+
+def test_id476_renderer_groups_by_koh_category_and_covers_every_row(tmp_path):
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    labels = list(matrix_module.REFERENCE_CONTEXTS["ID476"])
+    path = _write(tmp_path / "id476.tsv", labels)
+    matrix = load_matrix(path)
+    assert matrix.context == "ID476"
+    figure = render_sample(matrix, "S1", unit="counts")
+    groups = {trace["name"] for trace in figure["figure"]["traces"]}
+    assert groups == {
+        "Del 1 C", "Del 1 T", "Ins 1 C", "Ins 1 T",
+        "Del >=2", "Ins >=2", "Mh", "Complex",
+    }
+    assert sum(len(trace["x"]) for trace in figure["figure"]["traces"]) == len(labels)
+
+
 def test_generic_renderer_used_for_a_context_without_a_specialized_renderer(tmp_path):
     # SBS18 (T/U/N x 6 substitutions) has no dedicated renderer in renderers.py.
     labels = ["T:C>A", "T:C>G", "T:C>T", "T:T>A", "T:T>C", "T:T>G",

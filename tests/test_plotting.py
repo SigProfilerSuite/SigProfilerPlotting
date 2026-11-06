@@ -70,6 +70,18 @@ test_configs = {
         "function": sigPlt.plotID,
         "example_file": "example.ID83.all",
     },
+    "ID89": {
+        "type": "ID",
+        "context": "89",
+        "function": sigPlt.plotID,
+        "example_file": "example.ID89.all",
+    },
+    "ID476": {
+        "type": "ID",
+        "context": "476",
+        "function": sigPlt.plotID,
+        "example_file": "example.ID476.all",
+    },
     "CNV48": {
         "type": "CNV",
         "context": "48",

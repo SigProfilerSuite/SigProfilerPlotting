@@ -17,7 +17,7 @@ SPP_SV = os.path.join(SPP_TEST_PATH, "input/SV/")
 # List of plot types to test
 plot_types_SBS = ["96", "288"]
 plot_types_DBS = ["78"]
-plot_types_ID = ["83"]
+plot_types_ID = ["83", "89", "476"]
 plot_types_CNV = ["48"]
 plot_types_SV = ["32"]
 

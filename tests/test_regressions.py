@@ -155,6 +155,8 @@ def test_legacy_sbs_invalid_count_raises_value_error(plot_type, tmp_path):
         (sigplt.plotSBS, "96"),
         (sigplt.plotSBS, "288"),
         (sigplt.plotID, "83"),
+        (sigplt.plotID, "89"),
+        (sigplt.plotID, "476"),
         (sigplt.plotDBS, "78"),
     ],
 )
@@ -176,6 +178,25 @@ def test_zero_event_percentage_plot_returns_an_image(function, plot_type):
     assert list(images) == ["zero-sample"]
     assert images["zero-sample"].size[0] > 0
     images["zero-sample"].close()
+
+
+@pytest.mark.parametrize("plot_type", ["89", "476"])
+@pytest.mark.parametrize("savefig_format", ["pdf", "png", "PIL_Image"])
+def test_id89_id476_do_not_leak_matplotlib_figures(plot_type, savefig_format, tmp_path):
+    matrix = pd.DataFrame(
+        {"s1": 1, "s2": 2}, index=plotting.get_context_reference(plot_type)
+    )
+    matrix.index.name = plotting.MUTTYPE
+
+    baseline = len(plt.get_fignums())
+    result = sigplt.plotID(
+        matrix, str(tmp_path), "leak-check", plot_type, savefig_format=savefig_format
+    )
+    assert len(plt.get_fignums()) == baseline
+
+    if savefig_format == "PIL_Image":
+        for image in result.values():
+            image.close()
 
 
 def test_default_template_is_cached_outside_the_package(monkeypatch, tmp_path):
