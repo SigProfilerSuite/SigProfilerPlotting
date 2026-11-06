@@ -199,6 +199,119 @@ def test_id89_id476_do_not_leak_matplotlib_figures(plot_type, savefig_format, tm
             image.close()
 
 
+def test_compact_indel_label_is_unique_for_every_id89_and_id476_channel():
+    # plotting_A's review: ID89 needs one readable tick label per bar, and
+    # ID476's peak annotations need unambiguous text too -- both rely on
+    # _compact_indel_label never colliding across a whole reference file.
+    for plot_type in ("89", "476"):
+        labels = plotting.get_context_reference(plot_type)
+        compacted = [plotting._compact_indel_label(label) for label in labels]
+        assert len(set(compacted)) == len(compacted), plot_type
+
+
+def test_select_id_peaks_is_deterministic_and_respects_the_minimum_gap():
+    values = [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7]
+    first = plotting._select_id_peaks(values, max_peaks=10, min_gap=5)
+    second = plotting._select_id_peaks(values, max_peaks=10, min_gap=5)
+    assert first == second  # deterministic for the same input
+    assert first == [1, 10, 20]  # none within 5 columns of each other
+    for a, b in zip(first, first[1:]):
+        assert b - a >= 5
+
+
+def test_select_id_peaks_breaks_ties_by_column_index_and_skips_close_runners_up():
+    # Two equal-height peaks 2 columns apart (closer than min_gap=5): only
+    # the lower-index one is kept, not both -- that's the collision
+    # avoidance plotting_A asked for, made deterministic via the tie-break.
+    values = [0, 8, 0, 8, 0, 0, 0, 0, 0, 0]
+    assert plotting._select_id_peaks(values, max_peaks=10, min_gap=5) == [1]
+
+
+def test_select_id_peaks_ignores_zero_values():
+    assert plotting._select_id_peaks([0, 0, 0, 0], max_peaks=5, min_gap=1) == []
+
+
+def test_select_id_peaks_caps_at_max_peaks():
+    values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert len(plotting._select_id_peaks(values, max_peaks=3, min_gap=1)) == 3
+
+
+@pytest.mark.parametrize("plot_type", ["89", "476"])
+def test_grouped_id_template_tick_labels_match_the_spec(plot_type, tmp_path):
+    # Point 1 of plotting_A's review: ID89 must show one tick label per
+    # channel. Point 4's narrower ID476 instead relies on peak annotations,
+    # not per-bar labels -- confirm each context does exactly its own thing.
+    context = f"ID{plot_type}"
+    panel1, fig = plotting._build_grouped_id_template(context)
+    tick_texts = [label.get_text() for label in panel1.get_xticklabels()]
+    ref_order = plotting.get_context_reference(plot_type)
+
+    if plot_type == "89":
+        assert tick_texts == [plotting._compact_indel_label(label) for label in ref_order]
+    else:
+        # No per-channel labels baked into the ID476 template; matplotlib's
+        # default would just be the numeric tick positions as text.
+        assert tick_texts != [plotting._compact_indel_label(label) for label in ref_order]
+
+    plt.close(fig)
+
+
+def test_id476_figure_width_is_practical_to_view():
+    # Point 4: the original 110in (~11,000px at default dpi) layout was
+    # flagged as impractical. Generous but bounded -- this also guards
+    # against silently regressing back to something similarly extreme.
+    panel1, fig = plotting._build_grouped_id_template("ID476")
+    assert 10 <= fig.get_figwidth() <= 60
+    plt.close(fig)
+
+
+@pytest.mark.parametrize("plot_type", ["89", "476"])
+def test_nonzero_complex_channel_renders_without_error(plot_type, tmp_path):
+    # Point 3: MatrixGenerator emits real Complex-category events, so a
+    # sample with a nonzero Complex count must render cleanly (not just the
+    # all-zero/typical case) -- exercises the narrow-group callout path
+    # with an actual total to display, not just its template stub.
+    group_fn = plotting._id89_group if plot_type == "89" else plotting._id476_group
+    ref_order = plotting.get_context_reference(plot_type)
+    is_complex = [group_fn(label) == "Complex" for label in ref_order]
+    assert any(is_complex)  # sanity: the context actually has a Complex group
+    counts = [42 if complex_row else 1 for complex_row in is_complex]
+    matrix = pd.DataFrame({"s1": counts}, index=ref_order)
+    matrix.index.name = plotting.MUTTYPE
+
+    images = sigplt.plotID(
+        matrix, str(tmp_path), "complex-check", plot_type, savefig_format="PIL_Image"
+    )
+    assert images["s1"].size[0] > 0
+    images["s1"].close()
+
+
+def test_custom_text_bottom_only_is_rendered(tmp_path, monkeypatch):
+    # Point 5: custom_text_bottom alone (no upper/middle) must still be
+    # drawn -- previously plot_custom_text was only ever set True by upper
+    # or middle text, silently dropping bottom-only text.
+    calls = []
+    original_text = plotting.plt.Axes.text
+
+    def spy(self, *args, **kwargs):
+        calls.append(args[2] if len(args) > 2 else kwargs.get("s"))
+        return original_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(plotting.plt.Axes, "text", spy)
+
+    matrix = pd.DataFrame({"s1": 1}, index=plotting.get_context_reference("89"))
+    matrix.index.name = plotting.MUTTYPE
+    sigplt.plotID(
+        matrix,
+        str(tmp_path),
+        "bottom-only",
+        "89",
+        custom_text_bottom=["only the bottom line"],
+        savefig_format="pdf",
+    )
+    assert any(c and "only the bottom line" in str(c) for c in calls)
+
+
 def test_default_template_is_cached_outside_the_package(monkeypatch, tmp_path):
     monkeypatch.delenv("SIGPROFILERPLOTTING_VOLUME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))

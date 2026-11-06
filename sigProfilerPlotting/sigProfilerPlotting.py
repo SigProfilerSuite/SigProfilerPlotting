@@ -398,18 +398,71 @@ _ID476_GROUP_COLORS = {
     "Complex": tuple(c / 255 for c in (150, 150, 150)),
 }
 
+def _compact_indel_label(label):
+    """A short, collision-free tick/annotation label for one ID89/ID476 row.
+
+    Group membership/color already carries most of the semantic meaning, so
+    this just needs to be short and unique per row, not a direct copy of
+    mSigPlot's own (undocumented) abbreviation. Verified unique across both
+    reference files by tests/test_id_grouped_plotting.py.
+    """
+    compacted = label.replace("Del(", "D").replace("Ins(", "I")
+    return compacted.translate(str.maketrans("", "", "()[]:,"))
+
+
+def _select_id_peaks(values, max_peaks=15, min_gap=10):
+    """Deterministic bar selection for peak annotations on a wide, many-bar
+    plot (ID476 in particular -- 476 bars is too many to label individually).
+
+    Highest-value bars first, skipping any candidate whose column index
+    falls within ``min_gap`` columns of an already-selected one, so
+    annotation text doesn't visually collide. Ties broken by column index,
+    so the same input always selects the same bars -- this is the "use a
+    deterministic rule" plotting_A asked for, not a layout-engine heuristic.
+    """
+    ranked = sorted(range(len(values)), key=lambda i: (-values[i], i))
+    selected = []
+    for i in ranked:
+        if len(selected) >= max_peaks:
+            break
+        if values[i] <= 0:
+            continue
+        if all(abs(i - j) >= min_gap for j in selected):
+            selected.append(i)
+    return sorted(selected)
+
+
 _GROUPED_ID_CONTEXTS = {
     "ID89": {
         "group_fn": _id89_group,
         "colors": _ID89_GROUP_COLORS,
         "figwidth": 47.0,
+        # 89 bars is few enough to label individually (plotting_A's review);
+        # 476 is not -- it gets peak annotations instead (see "peaks" below).
+        "tick_labels": True,
+        "mirror_bottom": False,
+        "peaks": False,
     },
     "ID476": {
         "group_fn": _id476_group,
         "colors": _ID476_GROUP_COLORS,
-        "figwidth": 110.0,
+        # Was 110in (~11,000px at default dpi) -- impractical to view, per
+        # plotting_A's review. Peak annotations (not per-bar labels) are
+        # what keep this width-reduced layout interpretable.
+        "figwidth": 36.0,
+        "tick_labels": False,
+        "mirror_bottom": True,
+        "peaks": True,
     },
 }
+
+# Group header boxes narrower than this (figure-fraction) can't fit their
+# name/total inline without being illegibly tiny or clipped -- currently
+# only "Complex" in either context, but this is sized/generic rather than
+# hardcoded to that name, so it adapts if a future category breakdown adds
+# another small group. Narrow groups get an outside callout instead (see
+# _build_grouped_id_template / _plot_grouped_id).
+_NARROW_GROUP_WIDTH = 0.03
 
 
 def _grouped_id_layout(context):
@@ -425,23 +478,51 @@ def _grouped_id_layout(context):
     return groups, row_colors
 
 
+def _id_group_boxes(context):
+    """Group layout plus each group's figure-fraction x/width and narrowness.
+
+    Shared by the cached template (draws names/leader-line stubs) and the
+    per-sample plotting function (draws totals/callout text), so both agree
+    on exactly where each group's band sits.
+    """
+    groups, row_colors = _grouped_id_layout(context)
+    total_cols = sum(count for _, count, _ in groups)
+    left, right = 0.045, 0.965
+    boxes = []
+    x = left
+    for name, count, color in groups:
+        width = (right - left) * (count / total_cols)
+        boxes.append({
+            "name": name, "count": count, "color": color,
+            "x": x, "width": width, "narrow": width < _NARROW_GROUP_WIDTH,
+        })
+        x += width
+    return boxes, row_colors, total_cols
+
+
 def _build_grouped_id_template(context):
     """Build the cacheable figure/axes template for ID89 or ID476 (see make_pickle_file)."""
     spec = _GROUPED_ID_CONTEXTS[context]
-    groups, _ = _grouped_id_layout(context)
-    total_cols = sum(count for _, count, _ in groups)
+    boxes, _, total_cols = _id_group_boxes(context)
 
     plt.rcParams["axes.linewidth"] = 2
     plot1 = plt.figure(figsize=(spec["figwidth"], 12))
     plt.rc("axes", edgecolor="black")
-    panel1 = plt.axes([0.045, 0.17, 0.92, 0.65])
+    # ID89 shows one tick label per bar below the chart (plotting_A's
+    # review), which ID83-style mirrored top/bottom header boxes leave no
+    # room for -- so ID89 drops the bottom mirror and raises the panel to
+    # free that space; ID476 (no per-bar labels, just peak annotations)
+    # keeps the original mirrored layout.
+    panel_bottom = 0.17 if spec["mirror_bottom"] else 0.26
+    panel_height = 0.65 if spec["mirror_bottom"] else 0.56
+    panel1 = plt.axes([0.045, panel_bottom, 0.92, panel_height])
 
-    left, right = 0.045, 0.965
     y_top, y_bottom, box_height = 0.827, 0.114, 0.05
-    x = left
-    for name, count, color in groups:
-        width = (right - left) * (count / total_cols)
-        for y in (y_top, y_bottom):
+    narrow_index = 0
+    for box in boxes:
+        x, width, color, name = box["x"], box["width"], box["color"], box["name"]
+        ys = (y_top, y_bottom) if spec["mirror_bottom"] else (y_top,)
+        for y in ys:
             panel1.add_patch(
                 plt.Rectangle(
                     (x, y),
@@ -452,24 +533,49 @@ def _build_grouped_id_template(context):
                     transform=plt.gcf().transFigure,
                 )
             )
-        fontsize = max(9, min(26, width * 650))
-        plt.text(
-            x + width / 2,
-            y_top + box_height / 2,
-            name,
-            fontsize=fontsize,
-            fontname="Times New Roman",
-            fontweight="bold",
-            ha="center",
-            va="center",
-            rotation=90 if width < 0.05 else 0,
-            transform=plt.gcf().transFigure,
-        )
-        x += width
+        if box["narrow"]:
+            # Too narrow for inline text (would be clipped/illegible): a
+            # leader line out to a label stacked above the other callouts,
+            # clear of the header bands. The per-sample total is appended
+            # to this same callout at render time (see _plot_grouped_id),
+            # not drawn here, since totals vary per sample.
+            label_y = y_top + box_height + 0.015 + narrow_index * 0.04
+            plt.plot(
+                [x + width / 2, x + width / 2],
+                [y_top + box_height, label_y],
+                color="black",
+                linewidth=1,
+                transform=plt.gcf().transFigure,
+            )
+            narrow_index += 1
+        else:
+            fontsize = max(9, min(26, width * 650))
+            plt.text(
+                x + width / 2,
+                y_top + box_height / 2,
+                name,
+                fontsize=fontsize,
+                fontname="Times New Roman",
+                fontweight="bold",
+                ha="center",
+                va="center",
+                transform=plt.gcf().transFigure,
+            )
 
     labs = np.arange(0.375, total_cols + 0.375, 1)
     panel1.set_xlim([0, total_cols])
     panel1.set_xticks(labs)
+    if spec["tick_labels"]:
+        ref_order = get_context_reference(context.replace("ID", ""))
+        panel1.set_xticklabels(
+            [_compact_indel_label(label) for label in ref_order],
+            rotation="vertical",
+            fontsize=13,
+            color="grey",
+            fontname="Courier New",
+            verticalalignment="top",
+            fontweight="bold",
+        )
     [i.set_color("grey") for i in plt.gca().get_xticklabels()]
     return panel1, plot1
 
@@ -488,9 +594,10 @@ def _plot_grouped_id(
     dpi,
 ):
     """Shared static-plot implementation for ID89 and ID476 (see plotID())."""
+    spec = _GROUPED_ID_CONTEXTS[context]
     data = process_input(matrix_path, context.replace("ID", ""))
-    groups, row_colors = _grouped_id_layout(context)
-    total_cols = len(data.index)
+    boxes, row_colors, total_cols = _id_group_boxes(context)
+    ref_order = get_context_reference(context.replace("ID", ""))
 
     try:
         buf = io.BytesIO()
@@ -549,24 +656,63 @@ def _plot_grouped_id(
 
             # Per-group sub-totals, annotated above the header boxes -- this
             # mirrors mSigPlot's own ID89/ID476 spectrum plots, which show
-            # each group's total alongside its colored header band.
-            left, right = 0.045, 0.965
-            x = left
+            # each group's total alongside its colored header band. Narrow
+            # groups (see _NARROW_GROUP_WIDTH) get their name *and* total
+            # combined into the callout the template already stubbed out a
+            # leader line for, instead of illegible inline text.
             row_offset = 0
-            for name, count, _color in groups:
-                width = (right - left) * (count / total_cols)
-                group_total = int(np.sum(muts[row_offset : row_offset + count]))
-                plt.text(
-                    x + width / 2,
-                    0.80,
-                    "{:,}".format(group_total),
-                    fontsize=16,
-                    fontname="Arial",
-                    ha="center",
-                    transform=plt.gcf().transFigure,
-                )
-                x += width
-                row_offset += count
+            narrow_index = 0
+            y_top, box_height = 0.827, 0.05
+            for box in boxes:
+                group_total = int(np.sum(muts[row_offset : row_offset + box["count"]]))
+                if box["narrow"]:
+                    label_y = y_top + box_height + 0.015 + narrow_index * 0.04
+                    plt.text(
+                        box["x"] + box["width"] / 2,
+                        label_y + 0.005,
+                        f"{box['name']}: {group_total:,}",
+                        fontsize=14,
+                        fontname="Times New Roman",
+                        fontweight="bold",
+                        ha="center",
+                        va="bottom",
+                        transform=plt.gcf().transFigure,
+                    )
+                    narrow_index += 1
+                else:
+                    plt.text(
+                        box["x"] + box["width"] / 2,
+                        0.80,
+                        "{:,}".format(group_total),
+                        fontsize=16,
+                        fontname="Arial",
+                        ha="center",
+                        transform=plt.gcf().transFigure,
+                    )
+                row_offset += box["count"]
+
+            if spec["peaks"]:
+                # ID476 has too many bars (476) to label individually -- the
+                # deterministic, gap-spaced selection in _select_id_peaks
+                # picks the tallest, non-colliding bars to annotate instead,
+                # which is what keeps this context interpretable at a
+                # practical figure width (see _GROUPED_ID_CONTEXTS).
+                peak_values = muts / total_count * 100 if (percentage and total_count > 0) else muts
+                for index in _select_id_peaks(list(peak_values), max_peaks=15, min_gap=max(1, total_cols // 48)):
+                    panel1.annotate(
+                        _compact_indel_label(ref_order[index]),
+                        xy=(index + 0.4, peak_values[index]),
+                        xytext=(0, 6),
+                        textcoords="offset points",
+                        rotation=90,
+                        fontsize=11,
+                        fontname="Courier New",
+                        fontweight="bold",
+                        color="black",
+                        ha="center",
+                        va="bottom",
+                        annotation_clip=False,
+                    )
 
             label_text = sample if percentage else f"{sample}: {int(total_count):,} indels"
             plt.text(
@@ -584,8 +730,8 @@ def _plot_grouped_id(
             this_upper = custom_text_upper[sample_count] if custom_text_upper and sample_count < len(custom_text_upper) else None
             this_middle = custom_text_middle[sample_count] if custom_text_middle and sample_count < len(custom_text_middle) else None
             this_bottom = custom_text_bottom[sample_count] if custom_text_bottom and sample_count < len(custom_text_bottom) else None
-            plot_custom_text = bool(this_upper or this_middle)
-            for text in (this_upper, this_middle):
+            plot_custom_text = bool(this_upper or this_middle or this_bottom)
+            for text in (this_upper, this_middle, this_bottom):
                 if text and len(text) > 40:
                     print(
                         "To add a custom text, please limit the string to <40 characters including spaces."
@@ -609,7 +755,13 @@ def _plot_grouped_id(
 
             plt.gca().yaxis.grid(True)
             plt.gca().grid(which="major", axis="y", color=[0.6, 0.6, 0.6], zorder=1)
-            panel1.set_xlabel("Indel Type", fontsize=30, fontname="Times New Roman", weight="bold")
+            panel1.set_xlabel(
+                "Indel Type",
+                fontsize=30,
+                fontname="Times New Roman",
+                weight="bold",
+                labelpad=(110 if spec["tick_labels"] else 10),
+            )
             panel1.set_ylabel("")
             plt.ylabel(
                 "Percentage of Indels" if percentage else "Number of Indels",
@@ -621,7 +773,7 @@ def _plot_grouped_id(
                 axis="both",
                 which="both",
                 bottom=False,
-                labelbottom=False,
+                labelbottom=spec["tick_labels"],
                 left=False,
                 labelleft=True,
                 right=False,
