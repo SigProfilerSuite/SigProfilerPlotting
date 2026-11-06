@@ -132,8 +132,13 @@ def test_legacy_sbs_matrix_is_canonicalized_before_plotting(plot_type, tmp_path)
     pd.testing.assert_frame_equal(canonical, matrix)
 
 
-@pytest.mark.parametrize("plot_type", ["384", "1536", "4608"])
+@pytest.mark.parametrize("plot_type", ["384", "1536"])
 def test_legacy_sbs_invalid_count_raises_value_error(plot_type, tmp_path):
+    # "4608" is excluded here: plotSBS(..., "4608", ...) now routes through
+    # SBS4608Data/load_raw4608 (not this legacy _parse_mutation_value path),
+    # which raises its own differently-worded ValueError -- covered by
+    # test_plotSBS_4608_rejects_invalid_contributions in
+    # tests/test_sbs4608_plotting.py instead.
     source = os.path.join(SBS_INPUT_PATH, f"example.SBS{plot_type}.all")
     matrix = pd.read_csv(source, sep="\t", index_col=0).astype(object)
     matrix.iloc[0, 0] = "not-a-count"
