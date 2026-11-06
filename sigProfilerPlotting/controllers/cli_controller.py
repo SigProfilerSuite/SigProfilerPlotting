@@ -28,7 +28,7 @@ def common_plotting_arguments(parser):
         nargs="?",
         const=True,
         default=False,
-        help="Display percentages in the plot.",
+        help="Display percentages in the plot; omit to use the function default.",
     )
     parser.add_argument(
         "--custom_text_upper", help="Custom text to display at the top of the plot."
@@ -59,6 +59,10 @@ def parse_arguments_sbs(args: List[str]) -> argparse.Namespace:
         prog="SigProfilerPlotting plotSBS", description="Generate SBS plots."
     )
     common_plotting_arguments(parser)
+    # plotSBS resolves the omitted value by context: historical False for
+    # SBS6/24/96/384/1536, but True for signature/profile-based SBS4608.
+    # ID/DBS continue to inherit the common parser's explicit False default.
+    parser.set_defaults(percentage=None)
     return parser.parse_args(args)
 
 

@@ -51,6 +51,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image, ImageChops
+
 from .sbs4608.sbs4608_data import SBS4608Data, load_raw4608
 from .sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
 from .sbs4608.sbs4608_plot_config import SBS4608PlotConfig
@@ -65,6 +67,17 @@ from .sbs4608.sbs4608_plot_config import SBS4608PlotConfig
 _VALID_ANCHORS = ("auto", "left", "center", "right")
 
 _CUSTOM_TEXT_MAX_LENGTH = 40
+
+# Direct Kaleido vector PDFs can contain malformed clipping state that PDF
+# engines interpret differently. Render a complete high-resolution raster
+# and wrap it in a simple PDF page instead. At scale 2, 2160x2400 px maps
+# exactly to the historical 810x900 pt page at 192 dpi.
+_PLOT_WIDTH_PX = 1080
+_PLOT_HEIGHT_PX = 1200
+_PNG_SCALE = 2
+_PDF_WIDTH_PT = 810
+_PDF_HEIGHT_PT = 900
+_EXPECTED_MUTATION_HEADERS = ("C>A", "C>G", "C>T", "T>A", "T>C", "T>G")
 
 
 def _safe_filename(value: str) -> str:
@@ -111,6 +124,176 @@ def _custom_text_annotation(custom_text_upper, custom_text_middle, custom_text_b
     }]
 
 
+def _plain_annotation_text(value):
+    return re.sub(r"<[^>]+>", "", str(value or "")).strip()
+
+
+def _assert_sbs4608_figure_structure(built: dict, signature: str) -> None:
+    """Require every panel and label that defines a complete static page."""
+    traces = built.get("traces", [])
+    bars = [
+        trace for trace in traces
+        if trace.get("type") == "bar" and trace.get("yaxis") in (None, "y")
+    ]
+    if not set(_EXPECTED_MUTATION_HEADERS).issubset(
+        {trace.get("name") for trace in bars}
+    ):
+        raise RuntimeError("Incomplete SBS4608 main profile: mutation-class bars are missing.")
+
+    heatmap_axes = {
+        trace.get("yaxis") for trace in traces if trace.get("type") == "heatmap"
+    }
+    if not {"y2", "y3", "y4"}.issubset(heatmap_axes):
+        raise RuntimeError("Incomplete SBS4608 page: front/back/total heatmaps are required.")
+
+    bias_axes = {
+        trace.get("yaxis") for trace in traces if trace.get("type") == "scatter"
+    }
+    has_signal = any(float(value) != 0 for trace in bars for value in (trace.get("y") or []))
+    layout = built.get("layout", {})
+    bias_rows_present = {"yaxis5", "yaxis6"}.issubset(layout)
+    if (has_signal and not {"y5", "y6"}.issubset(bias_axes)) or not bias_rows_present:
+        raise RuntimeError("Incomplete SBS4608 page: both bias-summary rows are required.")
+
+    annotation_text = {
+        _plain_annotation_text(annotation.get("text"))
+        for annotation in layout.get("annotations", [])
+    }
+    required = {
+        *_EXPECTED_MUTATION_HEADERS,
+        signature,
+        "Transcribed / Untranscribed strand",
+        "Genic / Intergenic",
+    }
+    missing = sorted(required - annotation_text)
+    if missing:
+        raise RuntimeError(f"Incomplete SBS4608 page annotations: missing {missing}.")
+
+
+def _format_raw_contribution(value: float) -> str:
+    """Adaptive precision that never formats a nonzero contribution as zero."""
+    value = float(value)
+    return "0" if value == 0 else f"{value:.3g}"
+
+
+def _scale_to_raw_contributions(built: dict, total: float) -> None:
+    """Undo percent normalization without mislabeling profile values as counts."""
+    factor = total / 100.0 if total > 0 else 0.0
+    for trace in built["traces"]:
+        if trace.get("type") == "heatmap":
+            if trace.get("z"):
+                trace["z"] = [[cell * factor for cell in row] for row in trace["z"]]
+            if "zmin" in trace:
+                trace["zmin"] *= factor
+            if "zmax" in trace:
+                trace["zmax"] *= factor
+            colorbar = trace.get("colorbar")
+            if colorbar and colorbar.get("tickmode") == "array":
+                colorbar["tickvals"] = [value * factor for value in colorbar["tickvals"]]
+                colorbar["ticktext"] = [
+                    _format_raw_contribution(value) for value in colorbar["tickvals"]
+                ]
+            trace["hovertemplate"] = (
+                "x: %{x}<br>y: %{y}<br>Raw contribution: %{z:.4g}<extra></extra>"
+            )
+        elif trace.get("type") == "bar" and trace.get("yaxis") in (None, "y"):
+            if trace.get("y"):
+                trace["y"] = [value * factor for value in trace["y"]]
+            trace["hovertemplate"] = "%{x}<br>Raw contribution: %{y:.4g}<extra></extra>"
+
+    yaxis = built["layout"].get("yaxis")
+    if yaxis:
+        yaxis["title"] = {
+            **yaxis.get("title", {}),
+            "text": "Raw signature contribution",
+        }
+        yaxis.pop("ticksuffix", None)
+        yaxis["tickformat"] = ".3g"
+        if "range" in yaxis:
+            yaxis["range"] = [value * factor for value in yaxis["range"]]
+
+
+def _validate_rendered_png(path: Path) -> None:
+    """Reject a truncated raster before it can enter the report."""
+    expected_size = (_PLOT_WIDTH_PX * _PNG_SCALE, _PLOT_HEIGHT_PX * _PNG_SCALE)
+    with Image.open(path) as image:
+        image.load()
+        if image.format != "PNG" or image.size != expected_size:
+            raise RuntimeError(
+                f"Incomplete SBS4608 raster export: expected PNG {expected_size}, "
+                f"got {image.format} {image.size}."
+            )
+        rgb = image.convert("RGB")
+        width, height = rgb.size
+        bands = {
+            "main profile/header": (0, 0, width, round(height * 0.36)),
+            "heatmaps": (0, round(height * 0.32), width, round(height * 0.79)),
+            "bias summaries": (0, round(height * 0.77), width, height),
+        }
+        for name, box in bands.items():
+            crop = rgb.crop(box)
+            diff = ImageChops.difference(crop, Image.new("RGB", crop.size, "white"))
+            mask = diff.convert("L").point(lambda value: 255 if value > 8 else 0)
+            if mask.histogram()[255] < 500:
+                raise RuntimeError(
+                    f"Incomplete SBS4608 raster export: {name} band is blank/clipped."
+                )
+
+
+def _render_sbs4608_png(figure, path: Path) -> None:
+    figure.write_image(
+        str(path),
+        format="png",
+        width=_PLOT_WIDTH_PX,
+        height=_PLOT_HEIGHT_PX,
+        scale=_PNG_SCALE,
+    )
+    _validate_rendered_png(path)
+
+
+def _png_to_pdf_page(png_path: Path, pdf_path: Path) -> None:
+    """Wrap one complete raster in an exact 810x900 pt PDF page."""
+    expected_size = (_PLOT_WIDTH_PX * _PNG_SCALE, _PLOT_HEIGHT_PX * _PNG_SCALE)
+    with Image.open(png_path) as image:
+        image.load()
+        if image.size != expected_size:
+            raise RuntimeError(
+                f"Cannot assemble SBS4608 PDF page from {image.size}; expected {expected_size}."
+            )
+        resolution = image.width * 72.0 / _PDF_WIDTH_PT
+        image.convert("RGB").save(
+            pdf_path,
+            "PDF",
+            resolution=resolution,
+            quality=95,
+            subsampling=0,
+        )
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(str(pdf_path))
+    if len(reader.pages) != 1:
+        raise RuntimeError("SBS4608 raster-to-PDF assembly did not produce one page.")
+    page = reader.pages[0]
+    width, height = float(page.mediabox.width), float(page.mediabox.height)
+    if abs(width - _PDF_WIDTH_PT) > 0.01 or abs(height - _PDF_HEIGHT_PT) > 0.01:
+        raise RuntimeError(
+            f"SBS4608 PDF page has size {width:g}x{height:g} pt; "
+            f"expected {_PDF_WIDTH_PT}x{_PDF_HEIGHT_PT} pt."
+        )
+    resources = page.get("/Resources", {}).get_object()
+    xobjects = resources.get("/XObject", {}).get_object()
+    embedded_sizes = {
+        (int(obj.get_object().get("/Width", 0)), int(obj.get_object().get("/Height", 0)))
+        for obj in xobjects.values()
+        if obj.get_object().get("/Subtype") == "/Image"
+    }
+    if expected_size not in embedded_sizes:
+        raise RuntimeError(
+            "SBS4608 PDF page does not contain the full-resolution rendered image."
+        )
+
+
 def _build_sbs4608_pdf(
     matrix_path: str,
     output_path: str,
@@ -133,10 +316,6 @@ def _build_sbs4608_pdf(
             "Static SBS4608 plotting requires plotly, kaleido, and pypdf. "
             "Reinstall SigProfilerPlotting with its declared dependencies."
         ) from error
-
-    # Deferred: avoids a circular import (web.matrix imports back from the
-    # top-level sigProfilerPlotting module, which is what calls in here).
-    from .web.renderers import _scale_sbs4608_unit
 
     matrix_file = Path(matrix_path).expanduser().resolve()
     if not matrix_file.is_file():
@@ -171,13 +350,14 @@ def _build_sbs4608_pdf(
                 builder = SBS4608PlotBuilder(data, config)
                 fig_dict = builder.build()
 
-                # SBS4608Data/SBS4608PlotBuilder always build a percent-of-
-                # total figure; rescale to raw counts when percentage=False
-                # rather than a second, divergent scaling implementation
-                # (the same post-hoc rescale the dashboard's counts/percent/
-                # proportion unit toggle already uses and tests).
+                # The builder always produces percent-of-total. Static
+                # signature files may request their original profile
+                # contributions, which are not mutation counts.
                 total = sum(float(row["contribution"]) for row in raw4608)
-                _scale_sbs4608_unit(fig_dict, total, "percent" if percentage else "counts")
+                if not percentage:
+                    _scale_to_raw_contributions(fig_dict, total)
+
+                _assert_sbs4608_figure_structure(fig_dict, sig)
 
                 layout = dict(fig_dict["layout"])
                 annotations = [dict(a) for a in layout.get("annotations", [])]
@@ -192,14 +372,17 @@ def _build_sbs4608_pdf(
                 layout["annotations"] = annotations
 
                 fig = go.Figure(data=fig_dict["traces"], layout=layout)
+                png_path = Path(tmp_dir) / f"page-{sig_index}.png"
                 page_path = Path(tmp_dir) / f"page-{sig_index}.pdf"
                 try:
-                    fig.write_image(str(page_path), format="pdf")
+                    _render_sbs4608_png(fig, png_path)
+                    _png_to_pdf_page(png_path, page_path)
                 except Exception as error:
                     raise RuntimeError(
-                        "Static SBS4608 PDF export failed. Kaleido requires a local "
-                        "Chrome/Chromium installation; run 'plotly_get_chrome' if one "
-                        "is not already available."
+                        "Static SBS4608 PDF export failed while rendering or validating "
+                        "a complete raster page. Kaleido requires a local Chrome/Chromium "
+                        "installation; run 'plotly_get_chrome' if one is not already "
+                        "available."
                     ) from error
                 writer.append(str(page_path))
 

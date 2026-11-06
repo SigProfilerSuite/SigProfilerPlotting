@@ -32,7 +32,7 @@ Using the Python session, the command is as follows:
  ```python
 $ python3
 >> import sigProfilerPlotting as sigPlt
->> sigPlt.plotSBS(matrix_path, output_path, project, plot_type, percentage=False)
+>> sigPlt.plotSBS(matrix_path, output_path, project, plot_type, percentage=None)
  ```
 
 The required parameters are:
@@ -53,7 +53,7 @@ SigProfilerPlotting plotSBS <matrix_path> <output_path> <project> <plot_type>
 ```python
 import sigProfilerPlotting as sigPlt
 
-sigPlt.plotSBS(matrix_path, output_path, project, plot_type, percentage=False)
+sigPlt.plotSBS(matrix_path, output_path, project, plot_type, percentage=None)
 sigPlt.plotDBS(matrix_path, output_path, project, plot_type, percentage=False)
 sigPlt.plotID(matrix_path, output_path, project, plot_type, percentage=False)
 
@@ -66,6 +66,11 @@ interactive HTML report or as a multi-page static PDF via `plotSBS(...,
 "4608", ...)`. The input must contain all 4,608 `MutationType` rows (`T`,
 `U`, and `N` strands) for each selected sample or signature, for example
 `T:AA[C>A]AA`.
+
+When `percentage` is omitted, SBS4608 defaults to percentages because its
+input is a signature/profile matrix. Other SBS contexts retain their existing
+numerical default. Pass `percentage=False` for SBS4608 raw signature
+contributions (these are not labeled as mutation counts).
 
 ```python
 import sigProfilerPlotting as sigPlt

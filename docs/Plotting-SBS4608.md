@@ -116,7 +116,9 @@ is already a signature/profile file, not raw mutation counts, matching how
 the interactive report and the (now removed) `plotStatic()` always treated
 it. Pass `percentage=False` to instead show each panel's raw contribution
 values from the matrix (rescaled from the builder's native percent-of-total
-representation, not a second independent calculation).
+representation, not a second independent calculation). These are labeled
+**Raw signature contribution**, not mutation counts, and use adaptive
+precision so small nonzero heatmap values remain visible.
 
 `custom_text_upper`/`custom_text_middle`/`custom_text_bottom` work the same
 way they do for every other `plotSBS` context -- one string per selected
@@ -129,6 +131,18 @@ Kaleido cannot locate a browser, install one with:
 
 ```console
 plotly_get_chrome
+```
+
+For portability, Kaleido renders each page to a 2160x2400 PNG. The PNG is
+validated, converted immediately to an 810x900-point one-page raster PDF,
+closed, and appended to the report. This page-at-a-time path avoids malformed
+direct Kaleido vector PDFs and keeps memory bounded for large signature sets.
+
+Release QA can exercise the real Chrome/Kaleido renderer (the normal unit
+suite skips it) with:
+
+```console
+SPP_RUN_KALEIDO_INTEGRATION=1 pytest -q tests/test_sbs4608_plotting.py -k real_kaleido
 ```
 
 ## Parameters
