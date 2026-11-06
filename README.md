@@ -62,9 +62,10 @@ sigPlt.plotID(matrix_path, output_path, project, plot_type, percentage=False)
 ## SBS4608 plotting
 
 Strand-tagged pentanucleotide matrices can be rendered as a self-contained
-interactive HTML report or as a multi-page PDF. The input must contain all
-4,608 `MutationType` rows (`T`, `U`, and `N` strands) for each selected sample
-or signature, for example `T:AA[C>A]AA`.
+interactive HTML report or as a multi-page static PDF via `plotSBS(...,
+"4608", ...)`. The input must contain all 4,608 `MutationType` rows (`T`,
+`U`, and `N` strands) for each selected sample or signature, for example
+`T:AA[C>A]AA`.
 
 ```python
 import sigProfilerPlotting as sigPlt
@@ -74,17 +75,17 @@ sigPlt.plotInteractive(
     "example",
     output_path="plots",
 )
-sigPlt.plotStatic(
-    "example.SBS4608.all",
-    "example",
-    output_path="plots",
-    main_plot_type="strand_bias",
+sigPlt.plotSBS(
+    "example.SBS4608.all", "plots", "example", "4608",
 )
 ```
 
 `plotInteractive()` embeds Plotly in the HTML file, so the report works
-offline. `plotStatic()` uses Kaleido and requires a local Chrome or Chromium
-installation; run `plotly_get_chrome` if Kaleido cannot find one.
+offline. The static `plotSBS(..., "4608", ...)` path uses Kaleido and
+requires a local Chrome or Chromium installation; run `plotly_get_chrome` if
+Kaleido cannot find one. See [Plotting SBS4608](docs/Plotting-SBS4608.md) for
+the full parameter list (including `percentage`, `signatures`, and the
+`custom_text_upper`/`middle`/`bottom` annotations).
 
 ## ID89 and ID476 (Koh et al.) indel plotting
 
