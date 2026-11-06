@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import os
 import shutil
 import subprocess
 
@@ -12,6 +13,26 @@ from sigProfilerPlotting.sbs4608.sbs4608_data import (
     SUBS,
     load_raw4608,
 )
+
+
+def _mock_static_page_export(monkeypatch, capture=None):
+    """Keep API tests fast while exercising the real multi-page container."""
+    from pypdf import PdfWriter
+    import sigProfilerPlotting.sbs4608_static as static_module
+
+    def fake_render(figure, _path):
+        if capture is not None:
+            capture(figure)
+
+    def fake_assemble(_png_path, pdf_path):
+        writer = PdfWriter()
+        writer.add_blank_page(width=810, height=900)
+        with open(pdf_path, "wb") as output:
+            writer.write(output)
+        writer.close()
+
+    monkeypatch.setattr(static_module, "_render_sbs4608_png", fake_render)
+    monkeypatch.setattr(static_module, "_png_to_pdf_page", fake_assemble)
 
 
 def _write_sbs4608_matrix(
@@ -270,42 +291,27 @@ def test_count_matrices_are_normalized_to_percentages(tmp_path):
 
 
 def test_plotSBS_4608_builds_a_valid_multipage_container(tmp_path, monkeypatch):
-    import plotly.graph_objects as go
-    from pypdf import PdfReader, PdfWriter
+    from pypdf import PdfReader
 
     matrix = _write_sbs4608_matrix(tmp_path / "matrix.tsv")
 
-    def fake_write_image(_figure, path, format):
-        assert format == "pdf"
-        writer = PdfWriter()
-        writer.add_blank_page(width=1080, height=1200)
-        with open(path, "wb") as output:
-            writer.write(output)
-        writer.close()
-
-    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
+    _mock_static_page_export(monkeypatch)
     output = Path(
         plotSBS(str(matrix), str(tmp_path / "plots"), "fixture", "4608")
     )
 
     assert output.name == "SBS_4608_plots_fixture.pdf"
-    assert len(PdfReader(output).pages) == 1
+    page = PdfReader(output).pages[0]
+    assert float(page.mediabox.width) == 810
+    assert float(page.mediabox.height) == 900
 
 
 def test_plotSBS_4608_plots_only_the_requested_signatures(tmp_path, monkeypatch):
-    import plotly.graph_objects as go
-    from pypdf import PdfReader, PdfWriter
+    from pypdf import PdfReader
 
     matrix = _write_sbs4608_matrix(tmp_path / "matrix.tsv", columns=("S1", "S2", "S3"))
 
-    def fake_write_image(_figure, path, format):
-        writer = PdfWriter()
-        writer.add_blank_page(width=1080, height=1200)
-        with open(path, "wb") as output:
-            writer.write(output)
-        writer.close()
-
-    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
+    _mock_static_page_export(monkeypatch)
     output = Path(
         plotSBS(
             str(matrix), str(tmp_path / "plots"), "subset", "4608",
@@ -337,74 +343,92 @@ def test_plotSBS_4608_percentage_defaults_to_true(tmp_path, monkeypatch):
     # SBS4608 input is a signature/profile file, not raw mutation counts --
     # unlike every other plotSBS context, percentage should default on
     # without the caller passing it explicitly.
-    import plotly.graph_objects as go
-    from pypdf import PdfWriter
-
     matrix = _write_sbs4608_matrix(
         tmp_path / "matrix.tsv",
         contributions={"T:AA[C>A]AA": 400, "U:AA[C>A]AA": 200, "N:AA[C>A]AA": 200},
     )
     captured = {}
 
-    def fake_write_image(figure, path, format):
+    def capture(figure):
         captured["heatmap_max"] = max(
             (value for trace in figure.data if trace.type == "heatmap" for row in trace.z for value in row),
             default=0,
         )
-        writer = PdfWriter()
-        writer.add_blank_page(width=1080, height=1200)
-        with open(path, "wb") as output:
-            writer.write(output)
-        writer.close()
 
-    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
+    _mock_static_page_export(monkeypatch, capture)
     plotSBS(str(matrix), str(tmp_path / "plots"), "defaultpct", "4608")  # percentage omitted
     assert captured["heatmap_max"] == pytest.approx(100.0)
 
 
-def test_plotSBS_4608_percentage_false_recovers_raw_counts(tmp_path, monkeypatch):
-    import plotly.graph_objects as go
-    from pypdf import PdfWriter
-
+def test_plotSBS_4608_percentage_false_recovers_raw_contributions(tmp_path, monkeypatch):
     matrix = _write_sbs4608_matrix(
         tmp_path / "matrix.tsv",
         contributions={"T:AA[C>A]AA": 400, "U:AA[C>A]AA": 200, "N:AA[C>A]AA": 200},
     )
     captured = {}
 
-    def fake_write_image(figure, path, format):
+    def capture(figure):
         captured["heatmap_max"] = max(
             (value for trace in figure.data if trace.type == "heatmap" for row in trace.z for value in row),
             default=0,
         )
-        writer = PdfWriter()
-        writer.add_blank_page(width=1080, height=1200)
-        with open(path, "wb") as output:
-            writer.write(output)
-        writer.close()
+        captured["ytitle"] = figure.layout.yaxis.title.text
+        captured["colorbars"] = [
+            list(trace.colorbar.ticktext)
+            for trace in figure.data
+            if trace.type == "heatmap" and trace.showscale
+        ]
 
-    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
-    plotSBS(str(matrix), str(tmp_path / "plots"), "counts", "4608", percentage=False)
+    _mock_static_page_export(monkeypatch, capture)
+    plotSBS(str(matrix), str(tmp_path / "plots"), "raw", "4608", percentage=False)
     # The "total" heatmap merges all three strand tags for one pentanucleotide
-    # context, so the AA[C>A]AA cell's raw count is 400+200+200=800 -- the
-    # matrix's entire total, never a 0-100 percentage.
+    # context, so the AA[C>A]AA cell's raw contribution is 400+200+200=800.
     assert captured["heatmap_max"] == pytest.approx(800.0)
+    assert captured["ytitle"] == "Raw signature contribution"
+    assert captured["colorbars"]
+    assert all(text != "0" for texts in captured["colorbars"] for text in texts[1:])
+
+
+def test_raw_signature_contribution_precision_for_profile_summing_to_one(tmp_path):
+    from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
+    from sigProfilerPlotting.sbs4608_static import _scale_to_raw_contributions
+
+    nonzero = {
+        "T:AA[C>A]AA": 0.03125,
+        "U:AA[C>A]AA": 0.015625,
+        "N:AA[C>A]AA": 0.0078125,
+        "T:AC[C>G]GT": 0.00003125,
+    }
+    # Keep a realistic profile total (~1) while retaining a tiny nonzero cell.
+    nonzero["T:TT[T>G]TT"] = 1.0 - sum(nonzero.values())
+    matrix = _write_sbs4608_matrix(tmp_path / "profile.tsv", contributions=nonzero)
+    raw = load_raw4608(str(matrix), "Sample")
+    built = SBS4608PlotBuilder(
+        SBS4608Data(raw, "Sample"),
+        SBS4608PlotConfig(include_detailed_heatmaps=True),
+    ).build()
+    _scale_to_raw_contributions(built, sum(row["contribution"] for row in raw))
+
+    assert built["layout"]["yaxis"]["title"]["text"] == "Raw signature contribution"
+    assert built["layout"]["yaxis"]["tickformat"] == ".3g"
+    colorbars = [
+        trace["colorbar"]
+        for trace in built["traces"]
+        if trace.get("type") == "heatmap" and trace.get("showscale")
+    ]
+    assert colorbars
+    for colorbar in colorbars:
+        for value, text in zip(colorbar["tickvals"], colorbar["ticktext"]):
+            if value:
+                assert text != "0"
+                assert float(text) != 0
 
 
 def test_plotSBS_4608_zero_valued_matrix_does_not_raise(tmp_path, monkeypatch):
-    import plotly.graph_objects as go
-    from pypdf import PdfWriter
-
     matrix = _write_sbs4608_matrix(tmp_path / "zero.tsv", all_zero=True)
-
-    def fake_write_image(_figure, path, format):
-        writer = PdfWriter()
-        writer.add_blank_page(width=1080, height=1200)
-        with open(path, "wb") as output:
-            writer.write(output)
-        writer.close()
-
-    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
+    _mock_static_page_export(monkeypatch)
     plotSBS(str(matrix), str(tmp_path / "plots"), "zero", "4608")
 
 
@@ -426,24 +450,80 @@ def test_plotSBS_4608_incomplete_matrix_raises(tmp_path):
 
 
 def test_plotSBS_4608_custom_text_is_rendered_as_an_annotation(tmp_path, monkeypatch):
-    import plotly.graph_objects as go
-    from pypdf import PdfWriter
-
     matrix = _write_sbs4608_matrix(tmp_path / "matrix.tsv")
     captured = {}
 
-    def fake_write_image(figure, path, format):
+    def capture(figure):
         captured["texts"] = [a.text for a in figure.layout.annotations]
-        writer = PdfWriter()
-        writer.add_blank_page(width=1080, height=1200)
-        with open(path, "wb") as output:
-            writer.write(output)
-        writer.close()
 
-    monkeypatch.setattr(go.Figure, "write_image", fake_write_image)
+    _mock_static_page_export(monkeypatch, capture)
     plotSBS(
         str(matrix), str(tmp_path / "plots"), "fixture", "4608",
         custom_text_upper=["Stability: 0.97"],
         custom_text_middle=["Mutations: 12,345"],
     )
     assert any("Stability: 0.97" in t and "Mutations: 12,345" in t for t in captured["texts"])
+
+
+def test_sbs4608_structural_guard_detects_a_missing_bias_panel(tmp_path):
+    from sigProfilerPlotting.sbs4608.sbs4608_data import SBS4608Data
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_builder import SBS4608PlotBuilder
+    from sigProfilerPlotting.sbs4608.sbs4608_plot_config import SBS4608PlotConfig
+    from sigProfilerPlotting.sbs4608_static import _assert_sbs4608_figure_structure
+
+    matrix = _write_sbs4608_matrix(tmp_path / "matrix.tsv")
+    raw = load_raw4608(str(matrix), "Sample")
+    built = SBS4608PlotBuilder(
+        SBS4608Data(raw, "Sample"),
+        SBS4608PlotConfig(include_detailed_heatmaps=True),
+    ).build()
+    _assert_sbs4608_figure_structure(built, "Sample")
+    built["traces"] = [trace for trace in built["traces"] if trace.get("yaxis") != "y6"]
+    with pytest.raises(RuntimeError, match="bias-summary"):
+        _assert_sbs4608_figure_structure(built, "Sample")
+
+
+def test_png_to_pdf_assembly_preserves_full_raster_and_page_ratio(tmp_path):
+    from PIL import Image, ImageDraw
+    from pypdf import PdfReader
+    from sigProfilerPlotting.sbs4608_static import _png_to_pdf_page
+
+    png_path = tmp_path / "page.png"
+    pdf_path = tmp_path / "page.pdf"
+    image = Image.new("RGB", (2160, 2400), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 120, 120), fill="red")
+    draw.rectangle((2040, 2280, 2159, 2399), fill="blue")
+    image.save(png_path, "PNG")
+
+    _png_to_pdf_page(png_path, pdf_path)
+    page = PdfReader(pdf_path).pages[0]
+    assert float(page.mediabox.width) == pytest.approx(810)
+    assert float(page.mediabox.height) == pytest.approx(900)
+    assert page.images
+    assert page.images[0].image.size == (2160, 2400)
+
+
+@pytest.mark.skipif(
+    os.environ.get("SPP_RUN_KALEIDO_INTEGRATION") != "1",
+    reason="set SPP_RUN_KALEIDO_INTEGRATION=1 for real Chrome/Kaleido release QA",
+)
+def test_real_kaleido_sbs4608_raster_pdf_integration(tmp_path):
+    """Opt-in renderer test; normal unit tests do not require Chrome."""
+    from pypdf import PdfReader
+
+    contributions = {}
+    index = 1
+    total = sum(range(1, 4609))
+    for strand in "TUN":
+        for substitution in SUBS:
+            for left in DINUCS:
+                for right in DINUCS:
+                    contributions[f"{strand}:{left}[{substitution}]{right}"] = index / total
+                    index += 1
+    matrix = _write_sbs4608_matrix(tmp_path / "profile.tsv", contributions=contributions)
+    output = Path(plotSBS(str(matrix), str(tmp_path), "renderer", "4608"))
+    page = PdfReader(output).pages[0]
+    assert float(page.mediabox.width) == pytest.approx(810)
+    assert float(page.mediabox.height) == pytest.approx(900)
+    assert page.images and page.images[0].image.size == (2160, 2400)
