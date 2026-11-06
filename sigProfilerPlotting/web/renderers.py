@@ -243,6 +243,67 @@ def _id83(matrix, sample, values, ytitle, fmt):
     return _grouped(matrix.labels, values, group, colors, sample, matrix.context, ytitle, fmt)
 
 
+# ID89/ID476 (Koh et al. 2025) group the same way the static plotID()
+# contexts do in sigProfilerPlotting.py -- duplicated here, in pure-Python
+# string matching with no matplotlib dependency, to keep this module's
+# only import light (see module docstring); the two implementations are
+# kept in sync by tests/test_web_renderers.py comparing group names/sizes
+# against reference_formats/ID89.txt and ID476.txt directly.
+_ID89_T_BUCKETS = (
+    ("R(1,4)", "(1-4)"), ("R(5,7)", "(5-7)"), ("R(8,)", "(8+)"), ("R(0,4)", "(0-4)"),
+)
+
+
+def _id89_group(label: str) -> str:
+    if label == "Complex":
+        return "Complex"
+    if "Del(C)" in label:
+        return "Del 1 C"
+    if "Ins(C)" in label:
+        return "Ins 1 C"
+    for token, bucket in _ID89_T_BUCKETS:
+        if token in label:
+            if "Del(T)" in label:
+                return f"Del 1 T {bucket}"
+            if "Ins(T)" in label:
+                return f"Ins 1 T {bucket}"
+    if re.search(r":M\d", label) or re.search(r":M\(\d", label):
+        return "Del Mh"
+    return "Del >=2" if label.startswith("Del") else "Ins >=2"
+
+
+def _id476_group(label: str) -> str:
+    if label.startswith("Complex"):
+        return "Complex"
+    match = re.search(r"\[(Del|Ins)\((C|T)\)", label)
+    if match:
+        return f"{match.group(1)} 1 {match.group(2)}"
+    if re.search(r":M\d", label) or re.search(r":M\(\d", label):
+        return "Mh"
+    return "Del >=2" if label.startswith("Del") else "Ins >=2"
+
+
+def _id89(matrix, sample, values, ytitle, fmt):
+    colors = {
+        "Del 1 C": "#FDBE6F", "Del 1 T (1-4)": "#FD8D3C", "Del 1 T (5-7)": "#E6550D",
+        "Del 1 T (8+)": "#A63603", "Ins 1 C": "#C7E9C0", "Ins 1 T (0-4)": "#A1D99B",
+        "Ins 1 T (5-7)": "#41AB5D", "Ins 1 T (8+)": "#006D2C", "Del >=2": "#DE2D26",
+        "Ins >=2": "#3182BD", "Del Mh": "#756BB1", "Complex": "#969696",
+    }
+    return _grouped(matrix.labels, values, _id89_group, colors, sample, matrix.context, ytitle, fmt)
+
+
+def _id476(matrix, sample, values, ytitle, fmt):
+    colors = {
+        "Del 1 C": "#FDAE61", "Del 1 T": "#E6550D", "Ins 1 C": "#C7E9C0",
+        "Ins 1 T": "#41AB5D", "Del >=2": "#DE2D26", "Ins >=2": "#3182BD",
+        "Mh": "#756BB1", "Complex": "#969696",
+    }
+    figure = _grouped(matrix.labels, values, _id476_group, colors, sample, matrix.context, ytitle, fmt)
+    figure["layout"]["height"] = 570
+    return figure
+
+
 def _cnv48(matrix, sample, values, ytitle, fmt):
     colors = {"homdel": "#4D4D4D", "LOH": "#377EB8", "het": "#4DAF4A"}
     return _grouped(matrix.labels, values, lambda label: label.split(":")[1], colors,
@@ -572,7 +633,8 @@ def render_sample(
         values, ytitle, fmt = _unit(raw, unit)
         renderer = {
             "SBS288": _sbs288, "DBS78": _dbs78,
-            "ID83": _id83, "CNV48": _cnv48, "SV32": _sv32,
+            "ID83": _id83, "ID89": _id89, "ID476": _id476,
+            "CNV48": _cnv48, "SV32": _sv32,
         }.get(matrix.context, _generic)
         response = {"kind": "standard", "figure": renderer(matrix, sample, values, ytitle, fmt)}
 

@@ -182,8 +182,10 @@ The dashboard has a purpose-built, COSMIC-style view for:
   There is no strand information in an `SBS1536` matrix, so the **Top
   panel** variants and the **Transcription bias** section do not apply and
   are not shown.
-* **`SBS288`**, **`DBS78`**, **`ID83`**, **`CNV48`**, and **`SV32`** --
-  each with its own grouped, correctly colored and labeled layout.
+* **`SBS288`**, **`DBS78`**, **`ID83`**, **`ID89`**, **`ID476`**, **`CNV48`**,
+  and **`SV32`** -- each with its own grouped, correctly colored and labeled
+  layout. `ID89` and `ID476` are the Koh et al. indel classification schemes
+  -- see [Plotting ID89/ID476](Plotting-ID89-ID476.md).
 
 Any other context SigProfilerPlotting recognizes -- `SBS1536`'s sibling
 sizes `SBS6`, `SBS18`, `SBS24`, `SBS384`, `SBS6144`, the other `DBS`/`ID`

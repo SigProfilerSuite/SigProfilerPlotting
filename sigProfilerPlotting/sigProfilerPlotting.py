@@ -71,6 +71,10 @@ type_dict = {
     "83": "ID83.txt",
     "id": "ID83.txt",
     "id83": "ID83.txt",
+    "89": "ID89.txt",
+    "id89": "ID89.txt",
+    "476": "ID476.txt",
+    "id476": "ID476.txt",
     "cnv48": "CNV48.txt",
     "48": "CNV48.txt",
     "sv32": "SV32.txt",
@@ -314,6 +318,338 @@ def process_input(matrix_path, plot_type):
         return reindexed_data
 
     return order_input_context(plot_type, data)
+
+
+# -- ID89/ID476 (Koh et al. 2025 indel classifications) --------------------
+#
+# Unlike ID83's fixed 16-way category split, ID89 and ID476 group their
+# channels unevenly (e.g. ID89's "Del 1 C" group has 10 rows but "Ins 1 C"
+# has only 5), so the hand-tuned per-category pixel offsets ID83's template
+# uses do not generalize. These two contexts instead derive their legend
+# box widths/positions proportionally from each group's actual channel
+# count, computed by grouping the canonical reference order (see
+# reference_formats/ID89.txt / ID476.txt) with the functions below.
+
+
+def _id89_group(label):
+    """Map one ID89 reference label to its mSigPlot-style display group."""
+    if label == "Complex":
+        return "Complex"
+    if "Del(C)" in label:
+        return "Del 1 C"
+    if "Ins(C)" in label:
+        return "Ins 1 C"
+    for token, bucket in (
+        ("R(1,4)", "(1-4)"),
+        ("R(5,7)", "(5-7)"),
+        ("R(8,)", "(8+)"),
+        ("R(0,4)", "(0-4)"),
+    ):
+        if token in label:
+            if "Del(T)" in label:
+                return f"Del 1 T {bucket}"
+            if "Ins(T)" in label:
+                return f"Ins 1 T {bucket}"
+    if re.search(r":M\d", label) or re.search(r":M\(\d", label):
+        return "Del Mh"
+    return "Del >=2" if label.startswith("Del") else "Ins >=2"
+
+
+def _id476_group(label):
+    """Map one ID476 reference label to its mSigPlot-style display group."""
+    if label.startswith("Complex"):
+        return "Complex"
+    match = re.search(r"\[(Del|Ins)\((C|T)\)", label)
+    if match:
+        return f"{match.group(1)} 1 {match.group(2)}"
+    if re.search(r":M\d", label) or re.search(r":M\(\d", label):
+        return "Mh"
+    return "Del >=2" if label.startswith("Del") else "Ins >=2"
+
+
+# Sequential-shade colors (normalized 0-1 RGB): orange family for 1bp C/T
+# deletions (darker = longer homopolymer run), green for insertions, red/
+# blue for the >=2bp deletion/insertion families, purple for microhomology
+# deletions, and a neutral gray for the new Koh et al. "Complex" category
+# (a delins bucket ID83 has no equivalent for).
+_ID89_GROUP_COLORS = {
+    "Del 1 C": tuple(c / 255 for c in (253, 190, 111)),
+    "Del 1 T (1-4)": tuple(c / 255 for c in (253, 141, 60)),
+    "Del 1 T (5-7)": tuple(c / 255 for c in (230, 85, 13)),
+    "Del 1 T (8+)": tuple(c / 255 for c in (166, 54, 3)),
+    "Ins 1 C": tuple(c / 255 for c in (199, 233, 192)),
+    "Ins 1 T (0-4)": tuple(c / 255 for c in (161, 217, 155)),
+    "Ins 1 T (5-7)": tuple(c / 255 for c in (65, 171, 93)),
+    "Ins 1 T (8+)": tuple(c / 255 for c in (0, 109, 44)),
+    "Del >=2": tuple(c / 255 for c in (222, 45, 38)),
+    "Ins >=2": tuple(c / 255 for c in (49, 130, 189)),
+    "Del Mh": tuple(c / 255 for c in (117, 107, 177)),
+    "Complex": tuple(c / 255 for c in (150, 150, 150)),
+}
+
+_ID476_GROUP_COLORS = {
+    "Del 1 C": tuple(c / 255 for c in (253, 174, 97)),
+    "Del 1 T": tuple(c / 255 for c in (230, 85, 13)),
+    "Ins 1 C": tuple(c / 255 for c in (199, 233, 192)),
+    "Ins 1 T": tuple(c / 255 for c in (65, 171, 93)),
+    "Del >=2": tuple(c / 255 for c in (222, 45, 38)),
+    "Ins >=2": tuple(c / 255 for c in (49, 130, 189)),
+    "Mh": tuple(c / 255 for c in (117, 107, 177)),
+    "Complex": tuple(c / 255 for c in (150, 150, 150)),
+}
+
+_GROUPED_ID_CONTEXTS = {
+    "ID89": {
+        "group_fn": _id89_group,
+        "colors": _ID89_GROUP_COLORS,
+        "figwidth": 47.0,
+    },
+    "ID476": {
+        "group_fn": _id476_group,
+        "colors": _ID476_GROUP_COLORS,
+        "figwidth": 110.0,
+    },
+}
+
+
+def _grouped_id_layout(context):
+    """Ordered (name, count, color) groups + per-row colors, from the reference order."""
+    spec = _GROUPED_ID_CONTEXTS[context]
+    ref_order = get_context_reference(context.replace("ID", ""))
+    group_fn, colors = spec["group_fn"], spec["colors"]
+    groups = [
+        (name, len(list(members)), colors[name])
+        for name, members in itertools.groupby(ref_order, group_fn)
+    ]
+    row_colors = [colors[group_fn(label)] for label in ref_order]
+    return groups, row_colors
+
+
+def _build_grouped_id_template(context):
+    """Build the cacheable figure/axes template for ID89 or ID476 (see make_pickle_file)."""
+    spec = _GROUPED_ID_CONTEXTS[context]
+    groups, _ = _grouped_id_layout(context)
+    total_cols = sum(count for _, count, _ in groups)
+
+    plt.rcParams["axes.linewidth"] = 2
+    plot1 = plt.figure(figsize=(spec["figwidth"], 12))
+    plt.rc("axes", edgecolor="black")
+    panel1 = plt.axes([0.045, 0.17, 0.92, 0.65])
+
+    left, right = 0.045, 0.965
+    y_top, y_bottom, box_height = 0.827, 0.114, 0.05
+    x = left
+    for name, count, color in groups:
+        width = (right - left) * (count / total_cols)
+        for y in (y_top, y_bottom):
+            panel1.add_patch(
+                plt.Rectangle(
+                    (x, y),
+                    width,
+                    box_height,
+                    facecolor=color,
+                    clip_on=False,
+                    transform=plt.gcf().transFigure,
+                )
+            )
+        fontsize = max(9, min(26, width * 650))
+        plt.text(
+            x + width / 2,
+            y_top + box_height / 2,
+            name,
+            fontsize=fontsize,
+            fontname="Times New Roman",
+            fontweight="bold",
+            ha="center",
+            va="center",
+            rotation=90 if width < 0.05 else 0,
+            transform=plt.gcf().transFigure,
+        )
+        x += width
+
+    labs = np.arange(0.375, total_cols + 0.375, 1)
+    panel1.set_xlim([0, total_cols])
+    panel1.set_xticks(labs)
+    [i.set_color("grey") for i in plt.gca().get_xticklabels()]
+    return panel1, plot1
+
+
+def _plot_grouped_id(
+    matrix_path,
+    output_path,
+    project,
+    context,
+    percentage,
+    custom_text_upper,
+    custom_text_middle,
+    custom_text_bottom,
+    savefig_format,
+    volume,
+    dpi,
+):
+    """Shared static-plot implementation for ID89 and ID476 (see plotID())."""
+    data = process_input(matrix_path, context.replace("ID", ""))
+    groups, row_colors = _grouped_id_layout(context)
+    total_cols = len(data.index)
+
+    try:
+        buf = io.BytesIO()
+        fig_orig = make_pickle_file(context=context, return_plot_template=True, volume=volume)
+        pickle.dump(fig_orig, buf)
+        figs = {}
+        sample_count = 0
+
+        for sample in data.columns:
+            buf.seek(0)
+            figs[sample] = pickle.load(buf)
+            panel1 = figs[sample].axes[0]
+            muts = data[sample].values
+            total_count = np.sum(muts)
+            ymax = 0
+
+            if percentage:
+                if total_count > 0:
+                    plt.bar(
+                        np.arange(total_cols) + 0.4,
+                        muts / total_count * 100,
+                        width=0.4,
+                        color=row_colors,
+                        align="center",
+                        zorder=1000,
+                    )
+                    ymax = np.max(muts / total_count * 100)
+            else:
+                plt.bar(
+                    np.arange(total_cols) + 0.4,
+                    muts,
+                    width=0.4,
+                    color=row_colors,
+                    align="center",
+                    zorder=1000,
+                )
+                ymax = np.max(muts)
+
+            y = int(ymax * 1.25)
+            if y <= 4:
+                y += 4
+            while y % 4 != 0:
+                y += 1
+            ytick_offset = int(y / 4)
+
+            if percentage:
+                ylabs = [round(ytick_offset * i, 1) for i in range(5)]
+                ylabels = [str(v) + ("%" if v or i else "") for i, v in enumerate(ylabs)]
+            else:
+                ylabs = [ytick_offset * i for i in range(5)]
+                ylabels = spplt.getylabels(ylabs)
+
+            panel1.set_ylim([0, y])
+            panel1.set_yticks(ylabs)
+            panel1.set_yticklabels(ylabels, fontsize=30)
+
+            # Per-group sub-totals, annotated above the header boxes -- this
+            # mirrors mSigPlot's own ID89/ID476 spectrum plots, which show
+            # each group's total alongside its colored header band.
+            left, right = 0.045, 0.965
+            x = left
+            row_offset = 0
+            for name, count, _color in groups:
+                width = (right - left) * (count / total_cols)
+                group_total = int(np.sum(muts[row_offset : row_offset + count]))
+                plt.text(
+                    x + width / 2,
+                    0.80,
+                    "{:,}".format(group_total),
+                    fontsize=16,
+                    fontname="Arial",
+                    ha="center",
+                    transform=plt.gcf().transFigure,
+                )
+                x += width
+                row_offset += count
+
+            label_text = sample if percentage else f"{sample}: {int(total_count):,} indels"
+            plt.text(
+                0.0475,
+                0.90,
+                label_text,
+                fontsize=45,
+                weight="bold",
+                color="black",
+                fontname="Arial",
+                transform=plt.gcf().transFigure,
+            )
+
+            custom_text_upper_plot = ""
+            this_upper = custom_text_upper[sample_count] if custom_text_upper and sample_count < len(custom_text_upper) else None
+            this_middle = custom_text_middle[sample_count] if custom_text_middle and sample_count < len(custom_text_middle) else None
+            this_bottom = custom_text_bottom[sample_count] if custom_text_bottom and sample_count < len(custom_text_bottom) else None
+            plot_custom_text = bool(this_upper or this_middle)
+            for text in (this_upper, this_middle):
+                if text and len(text) > 40:
+                    print(
+                        "To add a custom text, please limit the string to <40 characters including spaces."
+                    )
+                    plot_custom_text = False
+
+            if plot_custom_text:
+                pieces = [t for t in (this_upper, this_middle, this_bottom) if t]
+                custom_text_upper_plot = "\n".join(pieces)
+                panel1.text(
+                    0.95,
+                    0.78,
+                    custom_text_upper_plot,
+                    fontsize=30,
+                    weight="bold",
+                    color="black",
+                    fontname="Arial",
+                    transform=plt.gcf().transFigure,
+                    ha="right",
+                )
+
+            plt.gca().yaxis.grid(True)
+            plt.gca().grid(which="major", axis="y", color=[0.6, 0.6, 0.6], zorder=1)
+            panel1.set_xlabel("Indel Type", fontsize=30, fontname="Times New Roman", weight="bold")
+            panel1.set_ylabel("")
+            plt.ylabel(
+                "Percentage of Indels" if percentage else "Number of Indels",
+                fontsize=32,
+                fontname="Times New Roman",
+                weight="bold",
+            )
+            panel1.tick_params(
+                axis="both",
+                which="both",
+                bottom=False,
+                labelbottom=False,
+                left=False,
+                labelleft=True,
+                right=False,
+                labelright=False,
+                top=False,
+                labeltop=False,
+                direction="in",
+                length=25,
+                colors="gray",
+                width=2,
+            )
+            [i.set_color("black") for i in plt.gca().get_yticklabels()]
+            sample_count += 1
+
+        return output_results(
+            savefig_format,
+            output_path,
+            project,
+            figs,
+            context[:2] + "_" + context[2:],
+            dpi=dpi,
+        )
+    except Exception:
+        print("There may be an issue with the formatting of your matrix file.")
+        pdf_path = output_path + f"{context[:2]}_{context[2:]}_plots_{project}.pdf"
+        if os.path.isfile(pdf_path):
+            os.remove(pdf_path)
+        raise
 
 
 def get_default_96labels():
@@ -1689,6 +2025,29 @@ def make_pickle_file(context="SBS96", return_plot_template=False, volume=None):
 
         [i.set_color("black") for i in plt.gca().get_yticklabels()]
 
+        return _finish_plot_template(
+            plot1, path, return_plot_template, strict_cache
+        )
+    elif context in _GROUPED_ID_CONTEXTS:
+        panel1, plot1 = _build_grouped_id_template(context)
+        plt.gca().yaxis.grid(True)
+        plt.gca().grid(which="major", axis="y", color=[0.6, 0.6, 0.6], zorder=1)
+        panel1.tick_params(
+            axis="both",
+            which="both",
+            bottom=False,
+            labelbottom=False,
+            left=False,
+            labelleft=True,
+            right=False,
+            labelright=False,
+            top=False,
+            labeltop=False,
+            direction="in",
+            length=25,
+            colors="gray",
+            width=2,
+        )
         return _finish_plot_template(
             plot1, path, return_plot_template, strict_cache
         )
@@ -8486,7 +8845,10 @@ def plotID(
     dpi=100,
 ):
     _require_pdf_for_legacy_context(
-        savefig_format, plot_type, {"94", "ID94", "94ID", "83"}, "plotID"
+        savefig_format,
+        plot_type,
+        {"94", "ID94", "94ID", "83", "89", "ID89", "476", "ID476"},
+        "plotID",
     )
     # create the output directory if it doesn't exist
     if not os.path.exists(output_path) and savefig_format.lower() != "pil_image":
@@ -8813,6 +9175,36 @@ def plotID(
             pdf_path = output_path + "ID_83_plots_" + project + ".pdf"
             if os.path.isfile(pdf_path):
                 os.remove(pdf_path)
+
+    elif plot_type in ("89", "ID89"):
+        return _plot_grouped_id(
+            matrix_path,
+            output_path,
+            project,
+            "ID89",
+            percentage,
+            custom_text_upper,
+            custom_text_middle,
+            custom_text_bottom,
+            savefig_format,
+            volume,
+            dpi,
+        )
+
+    elif plot_type in ("476", "ID476"):
+        return _plot_grouped_id(
+            matrix_path,
+            output_path,
+            project,
+            "ID476",
+            percentage,
+            custom_text_upper,
+            custom_text_middle,
+            custom_text_bottom,
+            savefig_format,
+            volume,
+            dpi,
+        )
 
     elif (
         plot_type == "INDEL_simple"

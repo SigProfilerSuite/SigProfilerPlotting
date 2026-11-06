@@ -239,6 +239,19 @@ def test_scrolling_to_the_end_fetches_the_next_page(tmp_path):
         assert page.is_hidden("#more")
 
 
+@pytest.mark.parametrize("context", ["ID89", "ID476"])
+def test_koh_indel_contexts_load_and_draw_with_their_dedicated_renderer(tmp_path, context):
+    path = _write_matrix(tmp_path / f"{context}.txt", context, ["A", "B"])
+    with _dashboard() as page:
+        _upload(page, path, context, 2)
+        # A dedicated renderer groups bars into named legend traces (its
+        # Koh et al. category names), unlike the generic fallback's
+        # context-derived single bucket when no grouping is found.
+        names = _plot(page).evaluate("gd => gd.data.map(t => t.name)")
+        assert len(set(names)) > 1
+        assert context not in names
+
+
 @pytest.mark.parametrize("context", ["ID28", "DBS1248", "SBS384"])
 def test_contexts_without_a_dedicated_renderer_still_draw(tmp_path, context):
     path = _write_matrix(tmp_path / f"{context}.txt", context, ["A", "B"])
@@ -376,7 +389,7 @@ def test_the_export_button_downloads_an_image(tmp_path):
         assert saved.read_text(encoding="utf-8").lstrip().startswith("<svg")
 
 
-@pytest.mark.parametrize("context", ["SBS96", "DBS78"])
+@pytest.mark.parametrize("context", ["SBS96", "DBS78", "ID89", "ID476"])
 @pytest.mark.parametrize("unit, whole", [("percent", 100.0), ("proportion", 1.0)])
 def test_a_unit_redraws_each_sample_as_shares_of_its_total(tmp_path, context, unit, whole):
     # Waits on the values themselves, not the axis title: each renderer is
