@@ -111,6 +111,13 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
   overflow-wrap: anywhere;
 }
 
+.warning {
+  margin: 0; padding: 8px 10px;
+  color: #704500; background: #fff4d6;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
 button, .file-button {
   font: inherit;
   padding: 6px 12px;

@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Prevent uploaded matrix replacement from deleting a backing file during an active dashboard render.
 - Preserve dashboard socket errors during startup and support IPv6 loopback hosts correctly.
 - Parse repeated CLI custom-text options as per-sample values instead of individual characters.
+- Accept R row-name matrix exports whose header omits the mutation-context column, inferred only when the data proves the shift, so a genuinely wrong first column is still rejected.
+- Canonicalize the legacy ID89 `Del(C):R(6,9)` repeat-interval label to the reference `Del(C):R(6,)`.
+- Omit, with a visible dashboard warning, ID476 signature columns R-padded with `NA` for an unresolved or entirely missing context instead of zero-filling them; reject any other `NA` pattern as a corrupted matrix.
 
 ### Changed
 - Updated repository, maintainer, and contact metadata.

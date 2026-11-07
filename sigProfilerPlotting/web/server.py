@@ -407,6 +407,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "context": matrix.context,
                 "samples": list(matrix.columns),
                 "labels_count": len(matrix.labels),
+                "warnings": list(matrix.warnings),
             },
         )
 

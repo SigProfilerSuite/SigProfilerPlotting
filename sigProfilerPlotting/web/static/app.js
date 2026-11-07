@@ -84,8 +84,16 @@ function clearError() {
   $('matrixError').classList.add('hidden');
 }
 
+function showWarnings(messages) {
+  const box = $('matrixWarning');
+  const warnings = Array.isArray(messages) ? messages.map(String) : [];
+  box.textContent = warnings.join(' ');
+  box.classList.toggle('hidden', warnings.length === 0);
+}
+
 async function upload(file) {
   clearError();
+  showWarnings([]);
   $('fileName').textContent = file.name;
   const before = $('matrixSummary').textContent;
   $('matrixSummary').textContent = 'Reading the matrix';
@@ -133,6 +141,7 @@ function loadMatrix(info) {
   $('matrixSummary').textContent =
     `${state.context} · ${info.labels_count} mutation contexts · ` +
     `${n} ${n === 1 ? 'sample' : 'samples'}`;
+  showWarnings(info.warnings);
   // SBS1536 reuses the SBS4608 panel renderer (same "sbs4608" wire kind --
   // a 1536-context matrix is exactly what SBS4608Data collapses to once
   // strand is summed away) but has no strand/transcription data at all, so

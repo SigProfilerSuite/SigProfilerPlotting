@@ -20,7 +20,7 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from ..sigProfilerPlotting import INDEX_VALS
 
@@ -55,6 +55,11 @@ class MatrixData:
     values: tuple[tuple[float, ...], ...] | None = None
     _source_path: Path | None = None
     _delimiter: str = "\t"
+    # Logical sample columns can be a subset of the physical file columns
+    # when structurally incomplete R-padded profiles were omitted.  Entries
+    # are zero-based within the value columns (i.e. excluding the context).
+    _source_column_indices: tuple[int, ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def sample_values(self, sample: str) -> list[float]:
         try:
@@ -66,7 +71,12 @@ class MatrixData:
             ) from exc
         if self.values is not None:
             return [row[index] for row in self.values]
-        return self._read_column_from_disk(index)
+        source_index = (
+            self._source_column_indices[index]
+            if self._source_column_indices
+            else index
+        )
+        return self._read_column_from_disk(source_index)
 
     def _read_column_from_disk(self, index: int) -> list[float]:
         # Already fully validated once, at upload time (see
@@ -80,7 +90,8 @@ class MatrixData:
             for row in reader:
                 if not row or all(not str(cell).strip() for cell in row):
                     continue
-                by_label[row[0].strip()] = float(row[index + 1])
+                label = _canonicalize_label(row[0])
+                by_label[label] = float(row[index + 1])
         return [by_label[label] for label in self.labels]
 
     def raw4608(self, sample: str) -> list[dict[str, object]]:
@@ -112,6 +123,17 @@ def _references() -> dict[str, tuple[str, ...]]:
 
 
 REFERENCE_CONTEXTS = _references()
+
+# Koh et al.'s original ID89 tables used the closed repeat interval 6--9.
+# mSigSpectra now deliberately canonicalizes that one spelling to a right-open
+# interval so the category remains valid when repeats above 9 are retained.
+# Keep this exact, input-boundary alias narrow; no fuzzy label matching.
+_LEGACY_LABEL_ALIASES = {"Del(C):R(6,9)": "Del(C):R(6,)"}
+
+
+def _canonicalize_label(value: object) -> str:
+    label = str(value).strip()
+    return _LEGACY_LABEL_ALIASES.get(label, label)
 
 
 def detect_context(labels: Iterable[str]) -> str:
@@ -190,8 +212,10 @@ def _decode(source) -> tuple[list[list[str]], str]:
         raise MatrixError(f"{name} is not UTF-8 text.") from exc
     if not text.strip():
         raise MatrixError(f"{name} is empty.")
-    first = next((line for line in text.splitlines() if line.strip()), "")
-    delimiter = "\t" if "\t" in first else "," if "," in first else None
+    nonempty_lines = (line for line in text.splitlines() if line.strip())
+    first = next(nonempty_lines, "")
+    second = next(nonempty_lines, "")
+    delimiter = _detect_delimiter(first, second)
     if delimiter is None:
         raise MatrixError(
             "The matrix must be tab-delimited (preferred) or comma-delimited with a header row."
@@ -200,6 +224,21 @@ def _decode(source) -> tuple[list[list[str]], str]:
         return list(csv.reader(io.StringIO(text), delimiter=delimiter)), str(name)
     except csv.Error as exc:
         raise MatrixError(f"Could not parse {name}: {exc}") from exc
+
+
+def _detect_delimiter(header_line: str, first_data_line: str = "") -> str | None:
+    """Detect a delimiter, including one-sample R row-name exports.
+
+    Such exports have no delimiter at all in their one-cell header, so the
+    first data line is the only place where the delimiter can be observed.
+    Header-first detection remains authoritative whenever it is available.
+    """
+    for line in (header_line, first_data_line):
+        if "\t" in line:
+            return "\t"
+        if "," in line:
+            return ","
+    return None
 
 
 def _from_dataframe(frame) -> tuple[list[list[object]], str]:
@@ -242,6 +281,121 @@ def _validate_header(header: list[str]) -> list[str]:
     return columns
 
 
+def _prepare_header(header: list[str], first_data_row: Sequence[object] | None) -> list[str]:
+    """Normalize R matrices whose top-left context cell was omitted.
+
+    R's row-name exports can write only the sample names in the header while
+    still writing the row name as the first field of every data row.  Accept
+    that layout only when the first non-empty data row proves the header is
+    short by exactly one field.  A recognized context header is never
+    reinterpreted as a sample name, so genuinely malformed rows remain errors.
+    """
+    if (
+        first_data_row is not None
+        and header
+        and header[0].lower() not in MUTATION_TYPE_HEADER_ALIASES
+        and len(first_data_row) == len(header) + 1
+    ):
+        return ["MutationType", *header]
+    return header
+
+
+def _format_column_examples(columns: Sequence[str]) -> str:
+    examples = ", ".join(repr(column) for column in columns[:5])
+    if len(columns) > 5:
+        examples += f", and {len(columns) - 5} more"
+    return examples
+
+
+def _resolve_missing_columns(
+    context: str,
+    labels: Sequence[str],
+    columns: Sequence[str],
+    missing_by_column: Sequence[set[str]],
+) -> tuple[tuple[int, ...], tuple[str, ...]]:
+    """Return usable physical columns and warnings for R ``NA`` padding.
+
+    The Liu compilation combines genuine 476-channel signatures with
+    lower-resolution 83-value profiles.  R pads those shorter columns with
+    393 ``NA`` cells (the first 83 physical rows contain the original values),
+    but those values are *not* ID476 measurements and cannot be scientifically
+    zero-filled into the remaining channels.  Omit that one exact structural
+    shape, plus wholly empty columns, and reject every other missing-value
+    pattern.
+    """
+    keep: list[int] = []
+    lower_resolution: list[str] = []
+    empty: list[str] = []
+    label_set = set(labels)
+    id476_prefix = set(REFERENCE_CONTEXTS.get("ID476", ())[:83])
+
+    for index, (column, missing) in enumerate(zip(columns, missing_by_column)):
+        if not missing:
+            keep.append(index)
+            continue
+        if context != "ID476":
+            raise MatrixError(
+                f"Missing value 'NA' in column {column!r}. NA padding is only "
+                "supported for the documented ID476 R-export layouts."
+            )
+        if missing == label_set:
+            empty.append(column)
+            continue
+        present = label_set - missing
+        if present == id476_prefix and len(missing) == 393:
+            lower_resolution.append(column)
+            continue
+        raise MatrixError(
+            f"Column {column!r} has {len(present)} of 476 ID476 values. "
+            "Only complete columns, wholly empty columns, or the documented "
+            "83-value/393-NA R padding layout are supported; other missing "
+            "values may indicate a corrupted matrix."
+        )
+
+    if not keep:
+        raise MatrixError(
+            "The matrix has no complete profiles to plot after omitting "
+            "incomplete R-padded columns."
+        )
+
+    warnings: list[str] = []
+    if lower_resolution:
+        warnings.append(
+            f"Omitted {len(lower_resolution)} lower-resolution "
+            f"{'column' if len(lower_resolution) == 1 else 'columns'} with only "
+            "83 of 476 values; they are not valid ID476 profiles and were not "
+            f"zero-filled: {_format_column_examples(lower_resolution)}."
+        )
+    if empty:
+        warnings.append(
+            f"Omitted {len(empty)} entirely missing "
+            f"{'column' if len(empty) == 1 else 'columns'}: "
+            f"{_format_column_examples(empty)}."
+        )
+    return tuple(keep), tuple(warnings)
+
+
+def _parse_cell(cell: object, line_number: int, column: str) -> float | None:
+    text = str(cell).strip()
+    if text == "NA":
+        return None
+    try:
+        number = float(text)
+    except (TypeError, ValueError) as exc:
+        raise MatrixError(
+            f"Non-numeric value {text!r} at line {line_number}, column {column!r}."
+        ) from exc
+    if not math.isfinite(number):
+        raise MatrixError(
+            f"Value at line {line_number}, column {column!r} must be finite; got {text!r}."
+        )
+    if number < 0:
+        raise MatrixError(
+            f"Value at line {line_number}, column {column!r} must be non-negative; got {text!r}."
+        )
+    return number
+
+
 def _canonical_order(context: str, labels: list[str]) -> tuple[str, ...]:
     order = {label: i for i, label in enumerate(REFERENCE_CONTEXTS[context])}
     return tuple(sorted(labels, key=lambda label: order[label]))
@@ -254,12 +408,23 @@ def _load_from_rows(rows: list[list], name: str) -> MatrixData:
     streaming benefit to chase here)."""
     if not rows:
         raise MatrixError(f"{name} is empty.")
-    header = [str(value).strip() for value in rows[0]]
+    first_data_row = next(
+        (
+            row
+            for row in rows[1:]
+            if row and any(str(cell).strip() for cell in row)
+        ),
+        None,
+    )
+    header = _prepare_header(
+        [str(value).strip() for value in rows[0]], first_data_row
+    )
     width = len(header)
     columns = _validate_header(header)
 
     labels: list[str] = []
-    values: list[tuple[float, ...]] = []
+    values: list[tuple[float | None, ...]] = []
+    missing_by_column = [set() for _ in columns]
     for line_number, row in enumerate(rows[1:], 2):
         if not row or all(str(cell).strip() == "" for cell in row):
             continue
@@ -268,37 +433,32 @@ def _load_from_rows(rows: list[list], name: str) -> MatrixData:
                 f"Line {line_number} has {len(row)} fields; the header has {width}. "
                 "Check for missing values or stray delimiters."
             )
-        label = str(row[0]).strip()
+        label = _canonicalize_label(row[0])
         if not label:
             raise MatrixError(f"Line {line_number} has an empty mutation context.")
-        parsed = []
-        for column, cell in zip(columns, row[1:]):
-            text = str(cell).strip()
-            try:
-                number = float(text)
-            except (TypeError, ValueError) as exc:
-                raise MatrixError(
-                    f"Non-numeric value {text!r} at line {line_number}, column {column!r}."
-                ) from exc
-            if not math.isfinite(number):
-                raise MatrixError(
-                    f"Value at line {line_number}, column {column!r} must be finite; got {text!r}."
-                )
-            if number < 0:
-                raise MatrixError(
-                    f"Value at line {line_number}, column {column!r} must be non-negative; got {text!r}."
-                )
+        parsed: list[float | None] = []
+        for index, (column, cell) in enumerate(zip(columns, row[1:])):
+            number = _parse_cell(cell, line_number, column)
+            if number is None:
+                missing_by_column[index].add(label)
             parsed.append(number)
         labels.append(label)
         values.append(tuple(parsed))
     context = detect_context(labels)
+    keep, warnings = _resolve_missing_columns(
+        context, labels, columns, missing_by_column
+    )
     order = {label: i for i, label in enumerate(REFERENCE_CONTEXTS[context])}
     sorted_rows = sorted(zip(labels, values), key=lambda pair: order[pair[0]])
     return MatrixData(
         context=context,
         labels=tuple(pair[0] for pair in sorted_rows),
-        columns=tuple(columns),
-        values=tuple(pair[1] for pair in sorted_rows),
+        columns=tuple(columns[index] for index in keep),
+        values=tuple(
+            tuple(pair[1][index] for index in keep)  # type: ignore[misc]
+            for pair in sorted_rows
+        ),
+        warnings=warnings,
     )
 
 
@@ -315,11 +475,12 @@ def _load_from_path(path: Path, name: str) -> MatrixData:
     try:
         with open(path, encoding="utf-8-sig", newline="") as probe:
             first_line = probe.readline()
+            first_data_line = next((line for line in probe if line.strip()), "")
     except UnicodeDecodeError as exc:
         raise MatrixError(f"{name} is not UTF-8 text.") from exc
     if not first_line.strip():
         raise MatrixError(f"{name} is empty.")
-    delimiter = "\t" if "\t" in first_line else "," if "," in first_line else None
+    delimiter = _detect_delimiter(first_line, first_data_line)
     if delimiter is None:
         raise MatrixError(
             "The matrix must be tab-delimited (preferred) or comma-delimited with a header row."
@@ -334,10 +495,36 @@ def _load_from_path(path: Path, name: str) -> MatrixData:
             except StopIteration:
                 raise MatrixError(f"{name} is empty.")
             header = [str(value).strip() for value in header]
+            first_data: tuple[int, list[str]] | None = None
+            for line_number, row in enumerate(reader, 2):
+                if row and any(str(cell).strip() for cell in row):
+                    first_data = (line_number, row)
+                    break
+            header = _prepare_header(
+                header, first_data[1] if first_data is not None else None
+            )
             width = len(header)
             columns = _validate_header(header)
+            missing_by_column = [set() for _ in columns]
 
-            for line_number, row in enumerate(reader, 2):
+            pending = [first_data] if first_data is not None else []
+            row_iterator = iter(reader)
+            for line_number, row in pending:
+                if len(row) != width:
+                    raise MatrixError(
+                        f"Line {line_number} has {len(row)} fields; the header has {width}. "
+                        "Check for missing values or stray delimiters."
+                    )
+                label = _canonicalize_label(row[0])
+                if not label:
+                    raise MatrixError(f"Line {line_number} has an empty mutation context.")
+                for index, (column, cell) in enumerate(zip(columns, row[1:])):
+                    if _parse_cell(cell, line_number, column) is None:
+                        missing_by_column[index].add(label)
+                labels.append(label)
+
+            start_line = (first_data[0] + 1) if first_data is not None else 2
+            for line_number, row in enumerate(row_iterator, start_line):
                 if not row or all(str(cell).strip() == "" for cell in row):
                     continue
                 if len(row) != width:
@@ -345,39 +532,29 @@ def _load_from_path(path: Path, name: str) -> MatrixData:
                         f"Line {line_number} has {len(row)} fields; the header has {width}. "
                         "Check for missing values or stray delimiters."
                     )
-                label = str(row[0]).strip()
+                label = _canonicalize_label(row[0])
                 if not label:
                     raise MatrixError(f"Line {line_number} has an empty mutation context.")
-                for column, cell in zip(columns, row[1:]):
-                    text = str(cell).strip()
-                    try:
-                        number = float(text)
-                    except (TypeError, ValueError) as exc:
-                        raise MatrixError(
-                            f"Non-numeric value {text!r} at line {line_number}, column {column!r}."
-                        ) from exc
-                    if not math.isfinite(number):
-                        raise MatrixError(
-                            f"Value at line {line_number}, column {column!r} must be finite; "
-                            f"got {text!r}."
-                        )
-                    if number < 0:
-                        raise MatrixError(
-                            f"Value at line {line_number}, column {column!r} must be non-negative; "
-                            f"got {text!r}."
-                        )
+                for index, (column, cell) in enumerate(zip(columns, row[1:])):
+                    if _parse_cell(cell, line_number, column) is None:
+                        missing_by_column[index].add(label)
                 labels.append(label)
     except UnicodeDecodeError as exc:
         raise MatrixError(f"{name} is not UTF-8 text.") from exc
 
     context = detect_context(labels)
+    keep, warnings = _resolve_missing_columns(
+        context, labels, columns, missing_by_column
+    )
     return MatrixData(
         context=context,
         labels=_canonical_order(context, labels),
-        columns=tuple(columns),
+        columns=tuple(columns[index] for index in keep),
         values=None,
         _source_path=path,
         _delimiter=delimiter,
+        _source_column_indices=keep,
+        warnings=warnings,
     )
 
 

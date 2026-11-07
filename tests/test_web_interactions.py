@@ -19,9 +19,9 @@ from contextlib import contextmanager
 
 import pytest
 
-sync_api = pytest.importorskip("playwright.sync_api")
-
 from sigProfilerPlotting.web.matrix import REFERENCE_CONTEXTS
+
+sync_api = pytest.importorskip("playwright.sync_api")
 
 PAGE = 15          # plots drawn before the reader asks for more
 PAGE_4608 = 4
@@ -58,6 +58,15 @@ def _write_matrix(path, context, names, low=5, high=60, cell=None):
         if cell is not None and index == 0:
             values[0] = cell
         rows.append(label + "\t" + "\t".join(values))
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def _write_r_padded_id476(path):
+    rows = ["Lower83\tComplete476\tEmpty"]
+    for index, label in enumerate(_labels("ID476")):
+        lower = str(index + 10) if index < 83 else "NA"
+        rows.append(f"{label}\t{lower}\t{index + 1}\tNA")
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     return path
 
@@ -270,6 +279,18 @@ def test_an_invalid_matrix_shows_the_servers_message(tmp_path):
         page.wait_for_selector("#matrixError:not(.hidden)")
         assert "Duplicate sample/signature column 'A'" in page.text_content("#matrixError")
         assert page.locator(".card").count() == 0
+
+
+def test_r_padded_id476_omissions_are_visible_to_the_user(tmp_path):
+    path = _write_r_padded_id476(tmp_path / "id476-r-export.tsv")
+    with _dashboard() as page:
+        _upload(page, path, "ID476", 1)
+        page.wait_for_selector("#matrixWarning:not(.hidden)")
+        warning = page.text_content("#matrixWarning")
+        assert "83 of 476" in warning
+        assert "Empty" in warning
+        assert page.locator("#sampleList input").count() == 1
+        assert page.locator("#sampleList input").first.get_attribute("value") == "Complete476"
 
 
 # -------------------------------------------------------------- the list

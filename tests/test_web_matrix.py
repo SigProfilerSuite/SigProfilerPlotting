@@ -1,6 +1,11 @@
 import pytest
 
-from sigProfilerPlotting.web.matrix import MatrixError, detect_context, load_matrix
+from sigProfilerPlotting.web.matrix import (
+    REFERENCE_CONTEXTS,
+    MatrixError,
+    detect_context,
+    load_matrix,
+)
 
 SBS6_LABELS = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
 
@@ -176,3 +181,118 @@ def test_blank_first_header_cell_is_accepted(tmp_path):
     path.write_text(path.read_text(encoding="utf-8").replace("MutationType", "", 1))
     matrix = load_matrix(path)
     assert matrix.context == "SBS6"
+
+
+@pytest.mark.parametrize("source_kind", ["path", "bytes"])
+def test_r_header_without_top_left_context_cell_is_accepted(tmp_path, source_kind):
+    text = "S1\tS2\n" + "\n".join(
+        f"{label}\t{index}\t{index + 10}"
+        for index, label in enumerate(SBS6_LABELS)
+    )
+    source = text.encode("utf-8")
+    if source_kind == "path":
+        source = tmp_path / "r-export.tsv"
+        source.write_text(text, encoding="utf-8")
+
+    matrix = load_matrix(source)
+
+    assert matrix.context == "SBS6"
+    assert matrix.columns == ("S1", "S2")
+    assert matrix.sample_values("S2") == [float(i + 10) for i in range(6)]
+
+
+def test_r_header_is_not_inferred_when_data_is_more_than_one_field_wider(tmp_path):
+    path = tmp_path / "too-wide.tsv"
+    path.write_text("S1\nC>A\t1\t2\n", encoding="utf-8")
+    with pytest.raises(MatrixError, match="header must contain"):
+        load_matrix(path)
+
+
+@pytest.mark.parametrize("source_kind", ["path", "bytes"])
+def test_legacy_id89_repeat_label_is_narrowly_canonicalized(tmp_path, source_kind):
+    labels = list(REFERENCE_CONTEXTS["ID89"])
+    labels[labels.index("Del(C):R(6,)")] = "Del(C):R(6,9)"
+    text = "LegacySignature\n" + "\n".join(
+        f"{label}\t{index + 1}" for index, label in enumerate(labels)
+    )
+    source = text.encode("utf-8")
+    if source_kind == "path":
+        source = tmp_path / "legacy-id89.tsv"
+        source.write_text(text, encoding="utf-8")
+
+    matrix = load_matrix(source)
+
+    assert matrix.context == "ID89"
+    assert matrix.labels == REFERENCE_CONTEXTS["ID89"]
+    assert "Del(C):R(6,9)" not in matrix.labels
+    assert len(matrix.sample_values("LegacySignature")) == 89
+
+
+def _id476_r_padded_text():
+    lines = ["LowerResolution\tComplete476\tEntirelyMissing"]
+    for index, label in enumerate(REFERENCE_CONTEXTS["ID476"]):
+        lower = str(index + 100) if index < 83 else "NA"
+        lines.append(f"{label}\t{lower}\t{index + 1}\tNA")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("source_kind", ["path", "bytes"])
+def test_id476_r_padding_omits_incomplete_profiles_with_warnings(
+    tmp_path, source_kind
+):
+    text = _id476_r_padded_text()
+    source = text.encode("utf-8")
+    if source_kind == "path":
+        source = tmp_path / "id476-r-export.tsv"
+        source.write_text(text, encoding="utf-8")
+
+    matrix = load_matrix(source)
+
+    assert matrix.context == "ID476"
+    assert matrix.columns == ("Complete476",)
+    assert len(matrix.labels) == 476
+    assert matrix.sample_values("Complete476") == [float(i + 1) for i in range(476)]
+    assert len(matrix.warnings) == 2
+    assert "LowerResolution" in matrix.warnings[0]
+    assert "83 of 476" in matrix.warnings[0]
+    assert "EntirelyMissing" in matrix.warnings[1]
+
+
+def test_id476_arbitrary_na_pattern_is_rejected(tmp_path):
+    labels = REFERENCE_CONTEXTS["ID476"]
+    lines = ["MutationType\tBroken"]
+    for index, label in enumerate(labels):
+        value = "NA" if index == 100 else "1"
+        lines.append(f"{label}\t{value}")
+    path = tmp_path / "broken-id476.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(MatrixError, match="corrupted matrix"):
+        load_matrix(path)
+
+
+def test_na_is_rejected_outside_documented_id476_layout(tmp_path):
+    lines = ["MutationType\tS1"] + [
+        f"{label}\t{'NA' if index == 0 else '1'}"
+        for index, label in enumerate(SBS6_LABELS)
+    ]
+    path = tmp_path / "sbs-na.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(MatrixError, match="only supported.*ID476"):
+        load_matrix(path)
+
+
+def test_id476_with_no_complete_profiles_is_rejected(tmp_path):
+    text = _id476_r_padded_text().replace("\tComplete476", "").replace(
+        "\tEntirelyMissing", ""
+    )
+    lines = []
+    for line in text.splitlines():
+        fields = line.split("\t")
+        lines.append("\t".join(fields[:2]))
+    path = tmp_path / "only-lower-resolution.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(MatrixError, match="no complete profiles"):
+        load_matrix(path)
