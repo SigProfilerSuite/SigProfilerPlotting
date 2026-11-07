@@ -1,6 +1,7 @@
 import http.client
-import io
 import json
+import os
+import socket
 import threading
 
 import pytest
@@ -67,9 +68,13 @@ def _cosmic_catalogue(tmp_path):
     names = ["SBS1", "SBS2", "SBS3", "SBS4", "SBS5", "SBS13"]
     lines = ["\t".join(["Type", *names])]
     for idx, label in enumerate(labels):
-        row = [label] + [str(((idx * 7 + col * 13 + 3) % 23) / 23.0) for col in range(len(names))]
+        row = [label] + [
+            str(((idx * 7 + col * 13 + 3) % 23) / 23.0) for col in range(len(names))
+        ]
         lines.append("\t".join(row))
-    (directory / "COSMIC_v3.4_SBS_GRCh37.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (directory / "COSMIC_v3.4_SBS_GRCh37.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
     cosmic.configure_catalogue_dir(directory)
     yield
     cosmic.configure_catalogue_dir(None)
@@ -96,7 +101,6 @@ def test_forged_host_header_is_rejected(running_server):
 
 
 def test_cross_origin_post_is_rejected(running_server):
-    port = running_server.server_address[1]
     body, content_type = _matrix_body(_sbs6_tsv())
     conn = _connection(running_server)
     headers = {
@@ -158,7 +162,9 @@ def test_render_without_a_prior_upload_is_rejected(running_server):
     conn.close()
 
 
-def test_unexpected_render_error_returns_500_without_dropping_the_connection(running_server, monkeypatch):
+def test_unexpected_render_error_returns_500_without_dropping_the_connection(
+    running_server, monkeypatch
+):
     # A bug anywhere in render_sample (anything that isn't MatrixError) must
     # not silently kill the connection -- that's indistinguishable from a
     # server crash to the browser ("Failed to fetch", no diagnostic info).
@@ -173,8 +179,14 @@ def test_unexpected_render_error_returns_500_without_dropping_the_connection(run
     body, content_type = _matrix_body(_sbs6_tsv())
     conn = _connection(running_server)
     conn.request(
-        "POST", "/api/matrix", body=body,
-        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+        "POST",
+        "/api/matrix",
+        body=body,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
     )
     resp = conn.getresponse()
     resp.read()
@@ -250,7 +262,9 @@ def test_upload_with_a_negative_content_length_is_rejected(running_server):
     conn.close()
 
 
-def test_upload_exceeding_the_configured_size_limit_is_rejected(running_server, monkeypatch):
+def test_upload_exceeding_the_configured_size_limit_is_rejected(
+    running_server, monkeypatch
+):
     import sigProfilerPlotting.web.server as server_module
 
     monkeypatch.setattr(server_module, "MAX_UPLOAD_BYTES", 10)
@@ -260,8 +274,14 @@ def test_upload_exceeding_the_configured_size_limit_is_rejected(running_server, 
     assert len(body) > 10
     conn = _connection(running_server)
     conn.request(
-        "POST", "/api/matrix", body=body,
-        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+        "POST",
+        "/api/matrix",
+        body=body,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
     )
     resp = conn.getresponse()
     assert resp.status == 413
@@ -296,8 +316,14 @@ def test_a_failed_upload_does_not_leak_its_temp_file(running_server):
     try:
         conn = _connection(running_server)
         conn.request(
-            "POST", "/api/matrix", body=body,
-            headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+            "POST",
+            "/api/matrix",
+            body=body,
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(len(body)),
+                "Origin": origin,
+            },
         )
         resp = conn.getresponse()
         assert resp.status == 400
@@ -312,9 +338,9 @@ def test_a_failed_upload_does_not_leak_its_temp_file(running_server):
     assert not os.path.exists(captured["path"])
 
 
-def test_uploading_a_replacement_matrix_cleans_up_the_previous_temp_file(running_server):
-    import os
-
+def test_uploading_a_replacement_matrix_cleans_up_the_previous_temp_file(
+    running_server,
+):
     port = running_server.server_address[1]
     origin = f"http://127.0.0.1:{port}"
 
@@ -322,8 +348,14 @@ def test_uploading_a_replacement_matrix_cleans_up_the_previous_temp_file(running
         body, content_type = _matrix_body(content)
         conn = _connection(running_server)
         conn.request(
-            "POST", "/api/matrix", body=body,
-            headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+            "POST",
+            "/api/matrix",
+            body=body,
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(len(body)),
+                "Origin": origin,
+            },
         )
         resp = conn.getresponse()
         assert resp.status == 200
@@ -339,6 +371,84 @@ def test_uploading_a_replacement_matrix_cleans_up_the_previous_temp_file(running
     assert second_tempfile != first_tempfile
     assert not os.path.exists(first_tempfile)
     assert os.path.exists(second_tempfile)
+
+
+def test_replacement_waits_for_an_in_flight_lazy_render(running_server, monkeypatch):
+    import sigProfilerPlotting.web.server as server_module
+
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+
+    def upload(content):
+        body, content_type = _matrix_body(content)
+        conn = _connection(running_server)
+        conn.request(
+            "POST",
+            "/api/matrix",
+            body=body,
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(len(body)),
+                "Origin": origin,
+            },
+        )
+        response = conn.getresponse()
+        status = response.status
+        response.read()
+        conn.close()
+        return status
+
+    assert upload(_sbs6_tsv()) == 200
+    old_path = running_server._matrix_tempfile
+    real_render = server_module.render_sample
+    real_set_matrix = running_server.set_dashboard_matrix
+    render_started = threading.Event()
+    release_render = threading.Event()
+    replacement_attempted = threading.Event()
+
+    def blocking_render(*args, **kwargs):
+        render_started.set()
+        assert release_render.wait(timeout=5)
+        return real_render(*args, **kwargs)
+
+    monkeypatch.setattr(server_module, "render_sample", blocking_render)
+
+    def observed_set_matrix(matrix, tempfile_path):
+        replacement_attempted.set()
+        return real_set_matrix(matrix, tempfile_path)
+
+    monkeypatch.setattr(running_server, "set_dashboard_matrix", observed_set_matrix)
+    outcomes = {}
+
+    def render_request():
+        conn = _connection(running_server)
+        conn.request("GET", "/api/render?sample=S1&unit=counts")
+        response = conn.getresponse()
+        outcomes["render"] = response.status
+        response.read()
+        conn.close()
+
+    def replacement_upload():
+        outcomes["upload"] = upload(_sbs96_tsv())
+
+    render_thread = threading.Thread(target=render_request)
+    upload_thread = threading.Thread(target=replacement_upload)
+    render_thread.start()
+    assert render_started.wait(timeout=5)
+    upload_thread.start()
+    assert replacement_attempted.wait(timeout=5)
+
+    # The replacement has reached the swap, but it cannot unlink while the lazy
+    # renderer is still using the old backing file.
+    upload_thread.join(timeout=0.1)
+    assert upload_thread.is_alive()
+    assert old_path is not None and os.path.exists(old_path)
+
+    release_render.set()
+    render_thread.join(timeout=5)
+    upload_thread.join(timeout=5)
+    assert outcomes == {"render": 200, "upload": 200}
+    assert not os.path.exists(old_path)
 
 
 def test_html_response_carries_a_content_security_policy(running_server):
@@ -357,10 +467,49 @@ def test_make_server_rejects_non_loopback_host():
         make_server("0.0.0.0", 0)
 
 
+def test_bind_failure_preserves_the_original_socket_error(monkeypatch):
+    import sigProfilerPlotting.web.server as server_module
+
+    def fail_bind(self):
+        raise OSError("address already in use")
+
+    monkeypatch.setattr(server_module.DashboardHTTPServer, "server_bind", fail_bind)
+    with pytest.raises(OSError, match="address already in use"):
+        make_server("127.0.0.1", 0)
+
+
+def test_ipv6_loopback_server_uses_ipv6_and_accepts_bracketed_host():
+    if not socket.has_ipv6:
+        pytest.skip("IPv6 is unavailable on this platform")
+    try:
+        server = make_server("::1", 0)
+    except OSError as exc:
+        pytest.skip(f"IPv6 loopback cannot be bound on this runner: {exc}")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert server.address_family == socket.AF_INET6
+        port = server.server_address[1]
+        conn = http.client.HTTPConnection("::1", port, timeout=5)
+        conn.putrequest("GET", "/", skip_host=True)
+        conn.putheader("Host", f"[::1]:{port}")
+        conn.endheaders()
+        response = conn.getresponse()
+        assert response.status == 200
+        response.read()
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_shutdown_requires_matching_origin(running_server):
     conn = _connection(running_server)
     conn.request(
-        "POST", "/api/shutdown", body=b"",
+        "POST",
+        "/api/shutdown",
+        body=b"",
         headers={"Content-Length": "0", "Origin": "http://evil.example.com"},
     )
     resp = conn.getresponse()
@@ -395,8 +544,14 @@ def test_shutdown_requires_matching_token(running_server):
     origin = f"http://127.0.0.1:{port}"
     conn = _connection(running_server)
     conn.request(
-        "POST", "/api/shutdown", body=b"",
-        headers={"Content-Length": "0", "Origin": origin, "X-Dashboard-Token": "wrong-token"},
+        "POST",
+        "/api/shutdown",
+        body=b"",
+        headers={
+            "Content-Length": "0",
+            "Origin": origin,
+            "X-Dashboard-Token": "wrong-token",
+        },
     )
     resp = conn.getresponse()
     assert resp.status == 403
@@ -430,8 +585,14 @@ def test_quit_button_shuts_down_the_running_server():
 
         conn = _connection(server)
         conn.request(
-            "POST", "/api/shutdown", body=b"",
-            headers={"Content-Length": "0", "Origin": origin, "X-Dashboard-Token": token},
+            "POST",
+            "/api/shutdown",
+            body=b"",
+            headers={
+                "Content-Length": "0",
+                "Origin": origin,
+                "X-Dashboard-Token": token,
+            },
         )
         resp = conn.getresponse()
         assert resp.status == 200
@@ -440,7 +601,9 @@ def test_quit_button_shuts_down_the_running_server():
         conn.close()
 
         thread.join(timeout=5)
-        assert not thread.is_alive(), "serve_forever() should have returned after /api/shutdown"
+        assert (
+            not thread.is_alive()
+        ), "serve_forever() should have returned after /api/shutdown"
     finally:
         server.server_close()
 
@@ -462,7 +625,9 @@ def test_cosmic_builds_endpoint_lists_configured_genome_builds(running_server):
     conn.close()
 
 
-def test_cosmic_builds_endpoint_reports_no_builds_without_a_configured_directory(running_server):
+def test_cosmic_builds_endpoint_reports_no_builds_without_a_configured_directory(
+    running_server,
+):
     from sigProfilerPlotting.web import cosmic
 
     cosmic.configure_catalogue_dir(None)
@@ -484,8 +649,14 @@ def test_render_with_compare_cosmic_returns_the_comparison_payload(running_serve
 
     conn = _connection(running_server)
     conn.request(
-        "POST", "/api/matrix", body=body,
-        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+        "POST",
+        "/api/matrix",
+        body=body,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
     )
     resp = conn.getresponse()
     assert resp.status == 200
@@ -511,8 +682,14 @@ def test_render_with_an_unknown_cosmic_build_is_rejected(running_server):
 
     conn = _connection(running_server)
     conn.request(
-        "POST", "/api/matrix", body=body,
-        headers={"Content-Type": content_type, "Content-Length": str(len(body)), "Origin": origin},
+        "POST",
+        "/api/matrix",
+        body=body,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
     )
     resp = conn.getresponse()
     resp.read()

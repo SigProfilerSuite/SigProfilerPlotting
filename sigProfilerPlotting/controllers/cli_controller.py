@@ -31,13 +31,28 @@ def common_plotting_arguments(parser):
         help="Display percentages in the plot; omit to use the function default.",
     )
     parser.add_argument(
-        "--custom_text_upper", help="Custom text to display at the top of the plot."
+        "--custom_text_upper",
+        action="append",
+        help=(
+            "Custom text to display at the top of a plot. Repeat once per "
+            "sample/signature, in matrix order."
+        ),
     )
     parser.add_argument(
-        "--custom_text_middle", help="Custom text to display in the middle of the plot."
+        "--custom_text_middle",
+        action="append",
+        help=(
+            "Custom text to display in the middle of a plot. Repeat once per "
+            "sample/signature, in matrix order."
+        ),
     )
     parser.add_argument(
-        "--custom_text_bottom", help="Custom text to display at the bottom of the plot."
+        "--custom_text_bottom",
+        action="append",
+        help=(
+            "Custom text to display at the bottom of a plot. Repeat once per "
+            "sample/signature, in matrix order."
+        ),
     )
     parser.add_argument(
         "--savefig_format",

@@ -16,6 +16,7 @@ import json
 import mimetypes
 import os
 import secrets
+import socket
 import tempfile
 import threading
 import traceback
@@ -29,7 +30,10 @@ from .renderers import render_sample
 
 STATIC_ROOT = (Path(__file__).parent / "static").resolve()
 
-_EXTRA_MIME_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+_EXTRA_MIME_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+}
 
 # A real SBS4608 matrix can run into the hundreds of MB of plain text
 # (tens of thousands of sample columns); this is a safety cap against a
@@ -37,7 +41,9 @@ _EXTRA_MIME_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css;
 # straight to a temp file (_dispatch_post) is that memory use no longer
 # scales with this number at all. Configurable since "unreasonable" is a
 # judgment call that depends on the machine running the dashboard.
-MAX_UPLOAD_BYTES = int(os.environ.get("SIGPROFILERPLOTTING_MAX_UPLOAD_BYTES", 4 * 1024 * 1024 * 1024))
+MAX_UPLOAD_BYTES = int(
+    os.environ.get("SIGPROFILERPLOTTING_MAX_UPLOAD_BYTES", 4 * 1024 * 1024 * 1024)
+)
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 # Defense-in-depth: 'unsafe-inline' is only for style-src (Plotly sets inline
@@ -59,41 +65,54 @@ class DashboardHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, server_address, handler_class):
-        super().__init__(server_address, handler_class)
+        # Initialize our state before HTTPServer binds.  socketserver calls
+        # server_close() if binding fails, so the override below must be safe
+        # even when super().__init__() never completes.
         self.dashboard_matrix = None
         # The temp file backing dashboard_matrix's lazy, disk-backed reads
         # (see matrix.py) -- owned by the server, not by MatrixData, so it
         # can be cleaned up here when replaced by a new upload or when the
         # server shuts down, rather than ever leaking.
         self._matrix_tempfile: str | None = None
+        self._matrix_lock = threading.RLock()
         # A fresh random token per launch -- the launcher's pidfile records
         # it alongside the pid/port, and treats a pid/port whose live
         # /api/identity doesn't echo this exact token as unrelated to this
         # server (stale pidfile, reused pid, or a different process on the
         # same port), rather than ever trusting the pidfile's pid alone.
         self.instance_token = secrets.token_hex(16)
+        super().__init__(server_address, handler_class)
 
     def set_dashboard_matrix(self, matrix, tempfile_path: str | None) -> None:
         """Replace the active matrix, cleaning up whatever temp file the
         previous one was reading from (if any) -- uploading a new matrix
         must not leak the old one's backing file."""
-        previous = self._matrix_tempfile
-        self.dashboard_matrix = matrix
-        self._matrix_tempfile = tempfile_path
-        if previous is not None:
-            try:
-                os.unlink(previous)
-            except OSError:
-                pass
+        with self._matrix_lock:
+            previous = self._matrix_tempfile
+            self.dashboard_matrix = matrix
+            self._matrix_tempfile = tempfile_path
+            if previous is not None:
+                try:
+                    os.unlink(previous)
+                except OSError:
+                    pass
 
     def server_close(self) -> None:
+        with self._matrix_lock:
+            if self._matrix_tempfile is not None:
+                try:
+                    os.unlink(self._matrix_tempfile)
+                except OSError:
+                    pass
+                self._matrix_tempfile = None
+            self.dashboard_matrix = None
         super().server_close()
-        if self._matrix_tempfile is not None:
-            try:
-                os.unlink(self._matrix_tempfile)
-            except OSError:
-                pass
-            self._matrix_tempfile = None
+
+
+class IPv6DashboardHTTPServer(DashboardHTTPServer):
+    """IPv6 loopback variant used when ``make_server`` receives ``::1``."""
+
+    address_family = socket.AF_INET6
 
 
 def make_server(host: str = "127.0.0.1", port: int = 0) -> DashboardHTTPServer:
@@ -109,21 +128,26 @@ def make_server(host: str = "127.0.0.1", port: int = 0) -> DashboardHTTPServer:
 
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("The dashboard server only binds to loopback addresses.")
-    return DashboardHTTPServer((host, port), DashboardRequestHandler)
+    server_class = IPv6DashboardHTTPServer if host == "::1" else DashboardHTTPServer
+    return server_class((host, port), DashboardRequestHandler)
 
 
 def _allowed_host(header_value: str | None, port: int) -> bool:
     if not header_value:
         return False
     host = header_value.split(",", 1)[0].strip()
-    return host in (f"127.0.0.1:{port}", f"localhost:{port}")
+    return host in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}")
 
 
 def _allowed_origin(header_value: str | None, port: int) -> bool:
     if not header_value:
         return False
     origin = header_value.strip().rstrip("/")
-    return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
+    return origin in (
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"http://[::1]:{port}",
+    )
 
 
 def _stream_upload_to_tempfile(rfile, content_length: int) -> str:
@@ -201,7 +225,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             elif path == "/plotly.js":
                 self._serve_plotlyjs()
             elif path.startswith("/static/"):
-                self._serve_static(path[len("/static/"):])
+                self._serve_static(path[len("/static/") :])
             elif path == "/api/render":
                 self._serve_render(parse_qs(parsed.query))
             elif path == "/api/cosmic/builds":
@@ -218,15 +242,21 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def _serve_index(self) -> None:
         index_path = STATIC_ROOT / "index.html"
         if not index_path.is_file():
-            self._reject(HTTPStatus.NOT_FOUND, "The dashboard UI has not been built yet.")
+            self._reject(
+                HTTPStatus.NOT_FOUND, "The dashboard UI has not been built yet."
+            )
             return
-        self._write_bytes(HTTPStatus.OK, index_path.read_bytes(), "text/html; charset=utf-8")
+        self._write_bytes(
+            HTTPStatus.OK, index_path.read_bytes(), "text/html; charset=utf-8"
+        )
 
     def _serve_plotlyjs(self) -> None:
         import plotly.offline as pyo
 
         self._write_bytes(
-            HTTPStatus.OK, pyo.get_plotlyjs().encode("utf-8"), "text/javascript; charset=utf-8"
+            HTTPStatus.OK,
+            pyo.get_plotlyjs().encode("utf-8"),
+            "text/javascript; charset=utf-8",
         )
 
     def _serve_static(self, relative: str) -> None:
@@ -246,18 +276,29 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self._write_bytes(HTTPStatus.OK, candidate.read_bytes(), content_type)
 
     def _serve_render(self, query: dict) -> None:
-        matrix = self.server.dashboard_matrix
-        if matrix is None:
-            self._reject(HTTPStatus.CONFLICT, "Upload a matrix before requesting a render.")
-            return
         sample = query.get("sample", [None])[0]
         unit = query.get("unit", ["counts"])[0]
         compare_cosmic = query.get("compare_cosmic", [None])[0] or None
         if not sample:
-            self._reject(HTTPStatus.BAD_REQUEST, "The 'sample' query parameter is required.")
+            self._reject(
+                HTTPStatus.BAD_REQUEST, "The 'sample' query parameter is required."
+            )
             return
         try:
-            figure = render_sample(matrix, sample, unit, compare_cosmic=compare_cosmic)
+            # MatrixData reads its selected sample lazily from the uploaded
+            # temp file.  Hold the same lock used by replacement/cleanup so
+            # another upload cannot unlink that file mid-render.
+            with self.server._matrix_lock:
+                matrix = self.server.dashboard_matrix
+                if matrix is None:
+                    self._reject(
+                        HTTPStatus.CONFLICT,
+                        "Upload a matrix before requesting a render.",
+                    )
+                    return
+                figure = render_sample(
+                    matrix, sample, unit, compare_cosmic=compare_cosmic
+                )
         except MatrixError as exc:
             self._reject(HTTPStatus.BAD_REQUEST, str(exc))
             return
@@ -281,7 +322,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             {
                 "builds": [c["build"] for c in catalogues],
                 "catalogues": catalogues,
-                "catalogue_dir": str(cosmic.catalogue_dir()) if cosmic.catalogue_dir() else None,
+                "catalogue_dir": (
+                    str(cosmic.catalogue_dir()) if cosmic.catalogue_dir() else None
+                ),
             },
         )
 
@@ -323,7 +366,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         try:
             length = int(header)
         except (TypeError, ValueError):
-            self._reject(HTTPStatus.LENGTH_REQUIRED, "A valid Content-Length header is required.")
+            self._reject(
+                HTTPStatus.LENGTH_REQUIRED, "A valid Content-Length header is required."
+            )
             return
         if length < 0:
             self._reject(HTTPStatus.BAD_REQUEST, "Content-Length must not be negative.")
@@ -391,6 +436,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # still return a normal JSON error response.
         traceback.print_exc()
         try:
-            self._reject(HTTPStatus.INTERNAL_SERVER_ERROR, f"Internal server error: {exc}")
+            self._reject(
+                HTTPStatus.INTERNAL_SERVER_ERROR, f"Internal server error: {exc}"
+            )
         except Exception:
             pass  # the connection is already broken; nothing more to do
