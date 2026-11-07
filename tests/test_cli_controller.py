@@ -15,9 +15,7 @@ def test_sbs_cli_percentage_omission_is_none():
     [("false", False), ("true", True)],
 )
 def test_sbs_cli_preserves_explicit_percentage(value, expected):
-    parsed = cli_controller.parse_arguments_sbs(
-        [*BASE_ARGS, "--percentage", value]
-    )
+    parsed = cli_controller.parse_arguments_sbs([*BASE_ARGS, "--percentage", value])
     assert parsed.percentage is expected
 
 
@@ -42,3 +40,21 @@ def test_sbs4608_cli_omission_reaches_percentage_true(monkeypatch):
     cli_controller.dispatch_plot_sbs(parsed)
 
     assert captured["percentage"] is True
+
+
+def test_cli_custom_text_is_a_per_sample_list_instead_of_characters():
+    parsed = cli_controller.parse_arguments_sbs(
+        [
+            *BASE_ARGS,
+            "--custom_text_upper",
+            "Stability: 0.97",
+            "--custom_text_upper",
+            "Stability: 0.88",
+            "--custom_text_middle",
+            "Mutations: 12,345",
+        ]
+    )
+
+    assert parsed.custom_text_upper == ["Stability: 0.97", "Stability: 0.88"]
+    assert parsed.custom_text_middle == ["Mutations: 12,345"]
+    assert parsed.custom_text_bottom is None

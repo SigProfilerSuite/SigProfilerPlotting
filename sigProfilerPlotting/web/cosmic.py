@@ -21,20 +21,24 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import math
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .matrix import MatrixError
+from .matrix import MatrixError, REFERENCE_CONTEXTS
 
-_FILENAME_RE = re.compile(r"^COSMIC_v(?P<version>[0-9][0-9A-Za-z.]*)_SBS_(?P<build>\w+)\.txt$")
+_FILENAME_RE = re.compile(
+    r"^COSMIC_v(?P<version>[0-9][0-9A-Za-z.]*)_SBS_(?P<build>\w+)\.txt$"
+)
 
 # Canonical casing for recognized genome builds, and the fixed, human-sensible
 # display order (human builds first) rather than filesystem order.
 _KNOWN_BUILDS = ("GRCh37", "GRCh38", "mm9", "mm10", "mm39", "rn6", "rn7")
 _BUILD_BY_LOWER = {name.lower(): name for name in _KNOWN_BUILDS}
+_EXPECTED_SBS96 = frozenset(REFERENCE_CONTEXTS["SBS96"])
 
 _catalogue_dir: Path | None = None
 _env_dir = os.environ.get("SIGPROFILERPLOTTING_COSMIC_DIR")
@@ -51,6 +55,7 @@ def configure_catalogue_dir(path) -> None:
     global _catalogue_dir
     _catalogue_dir = Path(path).expanduser() if path else None
     _cache.clear()
+    _metadata_cache.clear()
 
 
 def catalogue_dir() -> Path | None:
@@ -75,7 +80,7 @@ def _discover() -> dict[str, tuple[Path, str]]:
     directory = _catalogue_dir
     if directory is None or not directory.is_dir():
         return {}
-    found: dict[str, tuple[Path, str]] = {}
+    candidates: dict[str, list[tuple[Path, str]]] = {}
     for entry in sorted(directory.iterdir()):
         match = _FILENAME_RE.match(entry.name)
         if not match or not entry.is_file():
@@ -83,8 +88,20 @@ def _discover() -> dict[str, tuple[Path, str]]:
         build = _BUILD_BY_LOWER.get(match.group("build").lower())
         if build is None:
             continue
-        found[build] = (entry, match.group("version"))
-    return found
+        candidates.setdefault(build, []).append((entry, match.group("version")))
+
+    duplicates = {build: files for build, files in candidates.items() if len(files) > 1}
+    if duplicates:
+        details = "; ".join(
+            f"{build}: {', '.join(path.name for path, _ in files)}"
+            for build, files in sorted(duplicates.items())
+        )
+        raise MatrixError(
+            "Multiple COSMIC catalogue files were found for the same genome build "
+            f"({details}). Keep exactly one version per build in the configured directory."
+        )
+    return {build: files[0] for build, files in candidates.items()}
+
 
 # Matches the single base immediately adjacent to the mutated base on each
 # side of a "[C>A]"-style substitution, regardless of what precedes or
@@ -110,6 +127,7 @@ def collapse_to_sbs96(raw_by_label: dict[str, float]) -> dict[str, float]:
         collapsed[key] = collapsed.get(key, 0.0) + value
     return collapsed
 
+
 _cache: dict[str, dict[str, dict[str, float]]] = {}
 _metadata_cache: dict[str, CatalogueInfo] = {}
 
@@ -132,21 +150,21 @@ def catalogue_metadata() -> list[CatalogueInfo]:
     return [_load_metadata(build) for build in available_builds()]
 
 
-def _checksum(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _load_metadata(build: str) -> CatalogueInfo:
+    signatures, path, version, checksum = _read_build(build)
     cached = _metadata_cache.get(build)
-    path, version = _discover()[build]
-    if cached is not None and cached.source_path == str(path):
+    if (
+        cached is not None
+        and cached.source_path == str(path)
+        and cached.version == version
+        and cached.checksum == checksum
+    ):
         return cached
-    signatures = _load_build(build)
     info = CatalogueInfo(
         build=build,
         version=version,
         source_path=str(path),
-        checksum=_checksum(path),
+        checksum=checksum,
         signature_count=len(signatures),
     )
     _metadata_cache[build] = info
@@ -158,19 +176,33 @@ def _load_build(build: str) -> dict[str, dict[str, float]]:
     loaded once and cached by its source path -- a file replaced at the
     same path (different content, same name) still invalidates correctly
     since the cache key folds in its checksum."""
+    return _read_build(build)[0]
+
+
+def _read_build(
+    build: str,
+) -> tuple[dict[str, dict[str, float]], Path, str, str]:
+    """Load and validate one catalogue from a single immutable byte snapshot."""
     found = _discover()
     if build not in found:
         raise MatrixError(
             f"Unknown or unavailable COSMIC genome build {build!r}. Choose one of: "
             + ", ".join(available_builds())
         )
-    path, _version = found[build]
-    cache_key = f"{path}:{_checksum(path)}"
+    path, version = found[build]
+    raw = path.read_bytes()
+    checksum = hashlib.sha256(raw).hexdigest()
+    cache_key = f"{path}:{checksum}"
     if cache_key in _cache:
-        return _cache[cache_key]
+        return _cache[cache_key], path, version, checksum
 
-    with open(path, encoding="utf-8") as handle:
-        rows = list(csv.reader(handle, delimiter="\t"))
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise MatrixError(
+            f"The COSMIC reference file for {build!r} ({path}) is not valid UTF-8."
+        ) from exc
+    rows = list(csv.reader(io.StringIO(text), delimiter="\t"))
     if not rows or len(rows[0]) < 2:
         raise MatrixError(
             f"The COSMIC reference file for {build!r} ({path}) must have a header row "
@@ -179,8 +211,24 @@ def _load_build(build: str) -> dict[str, dict[str, float]]:
     header = rows[0]
     signature_names = [name.strip() for name in header[1:]]
     if any(not name for name in signature_names):
-        raise MatrixError(f"The COSMIC reference file for {build!r} ({path}) has an unnamed signature column.")
+        raise MatrixError(
+            f"The COSMIC reference file for {build!r} ({path}) has an unnamed signature column."
+        )
+    duplicate_signature = next(
+        (
+            name
+            for index, name in enumerate(signature_names)
+            if name in signature_names[:index]
+        ),
+        None,
+    )
+    if duplicate_signature is not None:
+        raise MatrixError(
+            f"The COSMIC reference file for {build!r} ({path}) has duplicate "
+            f"signature column {duplicate_signature!r}."
+        )
     signatures: dict[str, dict[str, float]] = {name: {} for name in signature_names}
+    labels: list[str] = []
     for line_number, row in enumerate(rows[1:], 2):
         if not row or all(not str(cell).strip() for cell in row):
             continue
@@ -190,6 +238,17 @@ def _load_build(build: str) -> dict[str, dict[str, float]]:
                 f"on line {line_number}; the header has {len(header)}."
             )
         label = row[0].strip()
+        if not label:
+            raise MatrixError(
+                f"The COSMIC reference file for {build!r} ({path}) has an empty "
+                f"context label on line {line_number}."
+            )
+        if label in labels:
+            raise MatrixError(
+                f"The COSMIC reference file for {build!r} ({path}) has duplicate "
+                f"context {label!r} on line {line_number}."
+            )
+        labels.append(label)
         for name, cell in zip(signature_names, row[1:]):
             try:
                 value = float(cell)
@@ -198,9 +257,33 @@ def _load_build(build: str) -> dict[str, dict[str, float]]:
                     f"The COSMIC reference file for {build!r} ({path}) has a non-numeric "
                     f"value {cell!r} on line {line_number}, column {name!r}."
                 ) from exc
+            if not math.isfinite(value) or value < 0:
+                raise MatrixError(
+                    f"The COSMIC reference file for {build!r} ({path}) has invalid "
+                    f"value {cell!r} on line {line_number}, column {name!r}; values "
+                    "must be finite and non-negative."
+                )
             signatures[name][label] = value
+
+    label_set = set(labels)
+    if len(labels) != len(_EXPECTED_SBS96) or label_set != _EXPECTED_SBS96:
+        missing = sorted(_EXPECTED_SBS96 - label_set)
+        extra = sorted(label_set - _EXPECTED_SBS96)
+        details = []
+        if missing:
+            details.append(
+                f"{len(missing)} missing (for example {', '.join(map(repr, missing[:3]))})"
+            )
+        if extra:
+            details.append(
+                f"{len(extra)} unrecognized (for example {', '.join(map(repr, extra[:3]))})"
+            )
+        raise MatrixError(
+            f"The COSMIC reference file for {build!r} ({path}) must contain exactly "
+            f"the 96 unique SBS96 contexts; {'; '.join(details)}."
+        )
     _cache[cache_key] = signatures
-    return signatures
+    return signatures, path, version, checksum
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -222,11 +305,21 @@ def top_matches(query_by_label: dict[str, float], build: str, n: int = 5) -> lis
     not be considered here at all.
     """
     signatures = _load_build(build)
-    labels = list(query_by_label.keys())
+    query_labels = set(query_by_label)
+    if len(query_by_label) != len(_EXPECTED_SBS96) or query_labels != _EXPECTED_SBS96:
+        raise MatrixError(
+            "COSMIC comparison requires exactly the 96 unique SBS96 contexts in the query."
+        )
+    if any(not math.isfinite(value) or value < 0 for value in query_by_label.values()):
+        raise MatrixError(
+            "COSMIC comparison query values must be finite and non-negative."
+        )
+
+    labels = list(REFERENCE_CONTEXTS["SBS96"])
     query_vector = [query_by_label[label] for label in labels]
     scored = []
     for name, values_by_label in signatures.items():
-        signature_vector = [values_by_label.get(label, 0.0) for label in labels]
+        signature_vector = [values_by_label[label] for label in labels]
         score = _cosine_similarity(query_vector, signature_vector)
         scored.append((score, name, values_by_label))
     scored.sort(key=lambda entry: entry[0], reverse=True)

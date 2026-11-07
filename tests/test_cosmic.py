@@ -3,7 +3,7 @@ import importlib
 import pytest
 
 from sigProfilerPlotting.web import cosmic
-from sigProfilerPlotting.web.matrix import MatrixError
+from sigProfilerPlotting.web.matrix import MatrixError, REFERENCE_CONTEXTS
 
 # SigProfilerPlotting does not bundle or redistribute COSMIC's signature
 # catalogues (see cosmic.py's module docstring) -- every test here builds
@@ -11,12 +11,9 @@ from sigProfilerPlotting.web.matrix import MatrixError
 # than relying on real bundled data.
 
 _HEADER = ["Type", "SBS1", "SBS4", "SBS5"]
-_ROWS = [
-    _HEADER,
-    ["A[C>A]A", "1", "0", "2"],
-    ["A[C>G]A", "0", "1", "2"],
-    ["A[C>T]A", "0", "0", "2"],
-    ["A[T>A]A", "0", "0", "2"],
+_ROWS = [_HEADER] + [
+    [label, "1" if index == 0 else "0", "1" if index == 1 else "0", "2"]
+    for index, label in enumerate(REFERENCE_CONTEXTS["SBS96"])
 ]
 
 
@@ -56,7 +53,9 @@ def test_unrecognized_filenames_in_the_directory_are_ignored(tmp_path):
     directory.mkdir()
     _write_catalogue(directory / "COSMIC_v3.4_SBS_GRCh37.txt")
     (directory / "readme.txt").write_text("not a catalogue\n", encoding="utf-8")
-    (directory / "COSMIC_v3.4_SBS_notabuild.txt").write_text("Type\tSBS1\n", encoding="utf-8")
+    (directory / "COSMIC_v3.4_SBS_notabuild.txt").write_text(
+        "Type\tSBS1\n", encoding="utf-8"
+    )
     cosmic.configure_catalogue_dir(directory)
     try:
         assert cosmic.available_builds() == ["GRCh37"]
@@ -71,7 +70,9 @@ def test_configure_catalogue_dir_none_clears_it(catalogue_dir):
     cosmic.configure_catalogue_dir(catalogue_dir)  # restore for fixture teardown parity
 
 
-def test_catalogue_metadata_reports_version_path_checksum_and_signature_count(catalogue_dir):
+def test_catalogue_metadata_reports_version_path_checksum_and_signature_count(
+    catalogue_dir,
+):
     metadata = {info.build: info for info in cosmic.catalogue_metadata()}
     info = metadata["GRCh37"]
     assert info.version == "3.4"
@@ -79,7 +80,9 @@ def test_catalogue_metadata_reports_version_path_checksum_and_signature_count(ca
     assert info.signature_count == 3
     import hashlib
 
-    expected = hashlib.sha256((catalogue_dir / "COSMIC_v3.4_SBS_GRCh37.txt").read_bytes()).hexdigest()
+    expected = hashlib.sha256(
+        (catalogue_dir / "COSMIC_v3.4_SBS_GRCh37.txt").read_bytes()
+    ).hexdigest()
     assert info.checksum == expected
 
 
@@ -140,8 +143,65 @@ def test_load_build_rejects_a_non_numeric_value(tmp_path):
         cosmic.configure_catalogue_dir(None)
 
 
+def test_load_build_rejects_duplicate_signature_names(tmp_path):
+    directory = tmp_path / "cosmic"
+    directory.mkdir()
+    rows = [["Type", "SBS1", "SBS1"]] + [
+        [label, "1", "2"] for label in REFERENCE_CONTEXTS["SBS96"]
+    ]
+    _write_catalogue(directory / "COSMIC_v3.4_SBS_GRCh37.txt", rows=rows)
+    cosmic.configure_catalogue_dir(directory)
+    try:
+        with pytest.raises(MatrixError, match="duplicate signature column"):
+            cosmic._load_build("GRCh37")
+    finally:
+        cosmic.configure_catalogue_dir(None)
+
+
+def test_load_build_rejects_duplicate_contexts(tmp_path):
+    directory = tmp_path / "cosmic"
+    directory.mkdir()
+    rows = [_HEADER, *_ROWS[1:], _ROWS[1]]
+    _write_catalogue(directory / "COSMIC_v3.4_SBS_GRCh37.txt", rows=rows)
+    cosmic.configure_catalogue_dir(directory)
+    try:
+        with pytest.raises(MatrixError, match="duplicate context"):
+            cosmic._load_build("GRCh37")
+    finally:
+        cosmic.configure_catalogue_dir(None)
+
+
+def test_load_build_rejects_an_incomplete_sbs96_catalogue(tmp_path):
+    directory = tmp_path / "cosmic"
+    directory.mkdir()
+    _write_catalogue(directory / "COSMIC_v3.4_SBS_GRCh37.txt", rows=_ROWS[:-1])
+    cosmic.configure_catalogue_dir(directory)
+    try:
+        with pytest.raises(MatrixError, match="exactly the 96 unique SBS96 contexts"):
+            cosmic._load_build("GRCh37")
+    finally:
+        cosmic.configure_catalogue_dir(None)
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "-inf"])
+def test_load_build_rejects_negative_or_non_finite_values(tmp_path, value):
+    directory = tmp_path / "cosmic"
+    directory.mkdir()
+    rows = [row.copy() for row in _ROWS]
+    rows[1][1] = value
+    _write_catalogue(directory / "COSMIC_v3.4_SBS_GRCh37.txt", rows=rows)
+    cosmic.configure_catalogue_dir(directory)
+    try:
+        with pytest.raises(MatrixError, match="finite and non-negative"):
+            cosmic._load_build("GRCh37")
+    finally:
+        cosmic.configure_catalogue_dir(None)
+
+
 def test_cosine_similarity_of_identical_vectors_is_one():
-    assert cosmic._cosine_similarity([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(1.0)
+    assert cosmic._cosine_similarity([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(
+        1.0
+    )
 
 
 def test_cosine_similarity_is_scale_invariant():
@@ -185,9 +245,16 @@ def test_top_matches_rejects_an_unknown_build(catalogue_dir):
         cosmic.top_matches({"A[C>A]A": 1.0}, "not-a-real-build")
 
 
-def test_top_matches_rejects_a_build_removed_since_available_builds_was_checked(catalogue_dir):
+def test_top_matches_rejects_a_build_removed_since_available_builds_was_checked(
+    catalogue_dir,
+):
     with pytest.raises(MatrixError, match="Unknown or unavailable COSMIC genome build"):
         cosmic.top_matches({"A[C>A]A": 1.0}, "rn7")  # never configured in this fixture
+
+
+def test_top_matches_rejects_an_incomplete_query(catalogue_dir):
+    with pytest.raises(MatrixError, match="exactly the 96 unique SBS96 contexts"):
+        cosmic.top_matches({"A[C>A]A": 1.0}, "GRCh37")
 
 
 def test_load_build_caches_across_calls(catalogue_dir):
@@ -199,12 +266,30 @@ def test_load_build_caches_across_calls(catalogue_dir):
 def test_load_build_cache_invalidates_when_the_file_content_changes(catalogue_dir):
     first = cosmic._load_build("GRCh37")
     assert first["SBS1"]["A[C>A]A"] == 1.0
-    _write_catalogue(
-        catalogue_dir / "COSMIC_v3.4_SBS_GRCh37.txt",
-        rows=[["Type", "SBS1"], ["A[C>A]A", "99"]],
-    )
+    rows = [["Type", "SBS1"]] + [
+        [label, "99" if label == "A[C>A]A" else "0"]
+        for label in REFERENCE_CONTEXTS["SBS96"]
+    ]
+    _write_catalogue(catalogue_dir / "COSMIC_v3.4_SBS_GRCh37.txt", rows=rows)
     second = cosmic._load_build("GRCh37")
     assert second["SBS1"]["A[C>A]A"] == 99.0
+
+
+def test_metadata_cache_invalidates_when_same_path_content_changes(catalogue_dir):
+    first = {info.build: info for info in cosmic.catalogue_metadata()}["GRCh37"]
+    rows = [["Type", "Replacement"]] + [
+        [label, "1"] for label in REFERENCE_CONTEXTS["SBS96"]
+    ]
+    _write_catalogue(catalogue_dir / "COSMIC_v3.4_SBS_GRCh37.txt", rows=rows)
+    second = {info.build: info for info in cosmic.catalogue_metadata()}["GRCh37"]
+    assert second.checksum != first.checksum
+    assert second.signature_count == 1
+
+
+def test_duplicate_catalogue_versions_for_one_build_are_rejected(catalogue_dir):
+    _write_catalogue(catalogue_dir / "COSMIC_v3.5_SBS_GRCh37.txt")
+    with pytest.raises(MatrixError, match="Multiple COSMIC catalogue files"):
+        cosmic.available_builds()
 
 
 def test_collapse_to_sbs96_is_a_no_op_for_already_96_context_labels():
@@ -227,7 +312,9 @@ def test_collapse_to_sbs96_strips_strand_tag_and_pentanucleotide_flanks_together
     assert cosmic.collapse_to_sbs96(raw) == {"A[C>A]A": 15.0, "A[C>A]C": 3.0}
 
 
-def test_environment_variable_configures_the_default_catalogue_dir(tmp_path, monkeypatch):
+def test_environment_variable_configures_the_default_catalogue_dir(
+    tmp_path, monkeypatch
+):
     directory = tmp_path / "cosmic"
     directory.mkdir()
     _write_catalogue(directory / "COSMIC_v3.4_SBS_GRCh37.txt")

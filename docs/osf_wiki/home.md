@@ -9,7 +9,7 @@ The [README.md][3] file provides a great overview if you already have python and
 ## Citation ##
 Bergstrom EN, Huang MN, Mahto U, Barnes M, Stratton MR, Rozen SG, and Alexandrov LB (2019) SigProfilerMatrixGenerator: a tool for visualizing and exploring patterns of small mutational events. **BMC Genomics** 20, Article number: 685.
 https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-019-6041-2
-## License ## 
+## License ##
 
 Copyright (c) 2019, Erik Bergstrom [Alexandrov Lab]
 All rights reserved.
@@ -24,17 +24,18 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 ## Contact ##
 
-Please address any queries or bug reports to Erik Bergstrom at ebergstr@eng.ucsd.edu
+Please address any queries or bug reports to S M Ashiqul Islam at
+sislam6@albany.edu.
 
   [1]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73d34f8d5d98001a393840?mode=render
-  [2]: https://github.com/AlexandrovLab/SigProfilerPlotting
-  [3]: https://github.com/AlexandrovLab/SigProfilerPlotting/blob/master/README.md
+  [2]: https://github.com/SigProfilerSuite/SigProfilerPlotting
+  [3]: https://github.com/SigProfilerSuite/SigProfilerPlotting/blob/master/README.md
   [4]: https://realpython.com/installing-python/
   [5]: https://docs.brew.sh/Homebrew-and-Python
   [6]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c6b0c28737a510019aa3e15?mode=render
-  [7]: https://github.com/AlexandrovLab/SigProfilerPlotting
+  [7]: https://github.com/SigProfilerSuite/SigProfilerPlotting
   [8]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c5de3d676653c0018270138?mode=render
   [9]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73d2c482a3950017d09b92?mode=render
   [10]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73c72862c82a0019dae02f?mode=render
   [11]: https://files.osf.io/v1/resources/2aj6t/providers/osfstorage/5c73c7eb82a3950018cbfddc?mode=render
-  [12]: https://github.com/AlexandrovLab/SigProfilerPlottingR
+  [12]: https://github.com/SigProfilerSuite/SigProfilerPlottingR
