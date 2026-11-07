@@ -54,6 +54,28 @@ def _sbs6_tsv():
     return "\n".join(lines) + "\n"
 
 
+def _id89_r_export_tsv():
+    from sigProfilerPlotting.web.matrix import REFERENCE_CONTEXTS
+
+    labels = list(REFERENCE_CONTEXTS["ID89"])
+    labels[labels.index("Del(C):R(6,)")] = "Del(C):R(6,9)"
+    lines = ["ID89Signature"]  # R row-name export: omitted top-left cell
+    lines.extend(f"{label}\t{index + 1}" for index, label in enumerate(labels))
+    return "\n".join(lines) + "\n"
+
+
+def _id476_r_export_tsv():
+    from sigProfilerPlotting.web.matrix import REFERENCE_CONTEXTS
+
+    # The incomplete columns reproduce only the *shape* of the Liu R export;
+    # all values and names here are synthetic.
+    lines = ["Lower83\tComplete476\tEmpty"]
+    for index, label in enumerate(REFERENCE_CONTEXTS["ID476"]):
+        lower = str(index + 10) if index < 83 else "NA"
+        lines.append(f"{label}\t{lower}\t{index + 1}\tNA")
+    return "\n".join(lines) + "\n"
+
+
 # SigProfilerPlotting does not bundle or redistribute COSMIC's signature
 # catalogues -- configure a small, synthetic, user-supplied-style catalogue
 # directory for the tests below instead of relying on real bundled data.
@@ -152,6 +174,55 @@ def test_matrix_upload_and_render_round_trip(running_server):
     figure = json.loads(resp.read())
     assert figure["kind"] == "standard"
     conn.close()
+
+
+@pytest.mark.parametrize(
+    ("matrix_text", "expected_context", "sample", "expected_warnings"),
+    [
+        (_id89_r_export_tsv, "ID89", "ID89Signature", 0),
+        (_id476_r_export_tsv, "ID476", "Complete476", 2),
+    ],
+)
+def test_r_style_id_matrix_upload_and_render_round_trip(
+    running_server, matrix_text, expected_context, sample, expected_warnings
+):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body, content_type = _matrix_body(matrix_text())
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/matrix",
+        body=body,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
+    )
+    response = conn.getresponse()
+    assert response.status == 200
+    manifest = json.loads(response.read())
+    conn.close()
+
+    assert manifest["context"] == expected_context
+    assert manifest["samples"] == [sample]
+    assert manifest["labels_count"] == int(expected_context[2:])
+    assert len(manifest["warnings"]) == expected_warnings
+    assert running_server.dashboard_matrix.values is None
+
+    conn = _connection(running_server)
+    conn.request("GET", f"/api/render?sample={sample}&unit=counts")
+    response = conn.getresponse()
+    assert response.status == 200
+    figure = json.loads(response.read())
+    conn.close()
+
+    assert figure["kind"] == "standard"
+    if expected_context == "ID476":
+        assert "83 of 476" in manifest["warnings"][0]
+        assert "Empty" in manifest["warnings"][1]
 
 
 def test_render_without_a_prior_upload_is_rejected(running_server):
