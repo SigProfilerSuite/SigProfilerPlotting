@@ -327,6 +327,61 @@ def test_id476_renderer_groups_by_koh_category_and_covers_every_row(tmp_path):
     assert sum(len(trace["x"]) for trace in figure["figure"]["traces"]) == len(labels)
 
 
+def test_dbs78_renderer_groups_by_reference_dinucleotide_with_no_color_reuse(tmp_path):
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    labels = list(matrix_module.REFERENCE_CONTEXTS["DBS78"])
+    path = _write(tmp_path / "dbs78.tsv", labels)
+    matrix = load_matrix(path)
+    assert matrix.context == "DBS78"
+    figure = render_sample(matrix, "S1", unit="counts")
+    traces = figure["figure"]["traces"]
+    groups = {trace["name"] for trace in traces}
+    assert groups == {"AC", "AT", "CC", "CG", "CT", "GC", "TA", "TC", "TG", "TT"}
+    colors = [trace["marker"]["color"] for trace in traces]
+    assert len(set(colors)) == len(colors) == 10
+    assert sum(len(trace["x"]) for trace in traces) == len(labels)
+
+
+def test_dbs1248_renderer_groups_by_reference_dinucleotide_not_flank_prefix(tmp_path):
+    # Before the fix, DBS1248 had no dedicated renderer and fell to
+    # _generic(), whose family() split on the first ">" -- for a label like
+    # "A[AC>CA]T" that produced the meaningless group "A[AC" instead of the
+    # reference dinucleotide "AC".
+    import sigProfilerPlotting.web.matrix as matrix_module
+
+    labels = list(matrix_module.REFERENCE_CONTEXTS["DBS1248"])
+    path = _write(tmp_path / "dbs1248.tsv", labels)
+    matrix = load_matrix(path)
+    assert matrix.context == "DBS1248"
+    figure = render_sample(matrix, "S1", unit="counts")
+    traces = figure["figure"]["traces"]
+    groups = {trace["name"] for trace in traces}
+    assert groups == {"AC", "AT", "CC", "CG", "CT", "GC", "TA", "TC", "TG", "TT"}
+    assert sum(len(trace["x"]) for trace in traces) == len(labels)
+    # Same colors as DBS78, not the 8-entry PALETTE (which would silently
+    # reuse two colors across the 10 groups).
+    colors = {trace["name"]: trace["marker"]["color"] for trace in traces}
+    assert colors == {
+        "AC": "#03BCEE", "AT": "#0366CB", "CC": "#A1CE63", "CG": "#016601",
+        "CT": "#FE9898", "GC": "#E32926", "TA": "#FEB166", "TC": "#FE8001",
+        "TG": "#CB98FE", "TT": "#4C0198",
+    }
+    # Each group's own 16 flanking contexts (5' x 3') are kept together and
+    # in A..T x A..T order, not scattered across the figure in DBS1248's own
+    # row order (which interleaves all 10 dinucleotides within each 5' flank).
+    for trace in traces:
+        ref = trace["name"]
+        expected = [
+            f"{flank5}[{channel}]{flank3}"
+            for channel in matrix_module.REFERENCE_CONTEXTS["DBS78"]
+            if channel.split(">", 1)[0] == ref
+            for flank5 in "ACGT"
+            for flank3 in "ACGT"
+        ]
+        assert trace["x"] == expected
+
+
 def test_generic_renderer_used_for_a_context_without_a_specialized_renderer(tmp_path):
     # SBS18 (T/U/N x 6 substitutions) has no dedicated renderer in renderers.py.
     labels = ["T:C>A", "T:C>G", "T:C>T", "T:T>A", "T:T>C", "T:T>G",

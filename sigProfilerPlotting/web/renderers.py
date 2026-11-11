@@ -5,13 +5,23 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 
-from .matrix import MatrixData, MatrixError
+from .matrix import REFERENCE_CONTEXTS, MatrixData, MatrixError
 
 SBS_COLORS = {
     "C>A": "#03BCEE", "C>G": "#010101", "C>T": "#E32926",
     "T>A": "#CAC9C9", "T>C": "#A1CE63", "T>G": "#EBC6C4",
 }
 PALETTE = ["#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B", "#EECA3B", "#B279A2", "#FF9DA6"]
+# The 10 reference dinucleotides' colors from plotDBS's own static "78"
+# chart (sigProfilerPlotting.py), so DBS78 and DBS1248 are colored
+# identically to each other and to the static export -- not the 8-entry
+# PALETTE above, which is one short and silently reuses two of its colors
+# across the 10 groups.
+DBS_COLORS = {
+    "AC": "#03BCEE", "AT": "#0366CB", "CC": "#A1CE63", "CG": "#016601",
+    "CT": "#FE9898", "GC": "#E32926", "TA": "#FEB166", "TC": "#FE8001",
+    "TG": "#CB98FE", "TT": "#4C0198",
+}
 
 SBS96_SUBSTITUTIONS = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
 # The classic SigProfilerPlotting SBS96 display order groups all 16 contexts
@@ -45,7 +55,7 @@ def _unit(values: list[float], unit: str) -> tuple[list[float], str, str]:
 
 def _layout(sample: str, context: str, ytitle: str, height: int = 520) -> dict:
     return {
-        "title": {"text": f"{sample} — {context}", "x": 0.01, "xanchor": "left"},
+        "title": {"text": f"{sample} - {context}", "x": 0.01, "xanchor": "left"},
         "height": height,
         "margin": {"l": 68, "r": 25, "t": 58, "b": 135},
         "paper_bgcolor": "#ffffff", "plot_bgcolor": "#ffffff",
@@ -230,8 +240,42 @@ def _sbs288(matrix, sample, values, ytitle, fmt):
 
 
 def _dbs78(matrix, sample, values, ytitle, fmt):
-    return _grouped(matrix.labels, values, lambda label: label.split(">", 1)[0], {},
+    return _grouped(matrix.labels, values, lambda label: label.split(">", 1)[0], DBS_COLORS,
                     sample, matrix.context, ytitle, fmt)
+
+
+def _dbs1248(matrix, sample, values, ytitle, fmt):
+    """Groups by reference dinucleotide, like _dbs78 (same colors, too).
+
+    DBS1248 ("F5[REF>ALT]F3") has no dedicated renderer upstream of this
+    fix, so it fell to _generic(), whose family() takes everything before
+    the first ">" -- "A[AC>CA]T" becomes the meaningless "A[AC" group, and
+    with 40 of those the legend/color-cycling is useless. The reference
+    dinucleotide is `label[2:4]` (constant position: one flank, "[", then
+    the two reference bases), which is a real, 10-way grouping.
+
+    DBS1248's own row order interleaves all 10 reference dinucleotides
+    within each 5' flank rather than keeping one dinucleotide's 16 rows
+    together, so grouping alone would still leave each group's own bars
+    scattered. This reconstructs the canonical order instead -- DBS78's 78
+    channels (already reference-dinucleotide-grouped), each expanded to its
+    16 flanking contexts (5' x 3', A..T x A..T) -- the same approach
+    _sbs96_figure uses to recover SBS96's classic display order rather than
+    trusting the matrix file's own row order.
+    """
+    by_label = dict(zip(matrix.labels, values))
+    canonical_order = (
+        f"{flank5}[{channel}]{flank3}"
+        for channel in REFERENCE_CONTEXTS["DBS78"]
+        for flank5 in "ACGT"
+        for flank3 in "ACGT"
+    )
+    ordered_labels = [label for label in canonical_order if label in by_label]
+    ordered_values = [by_label[label] for label in ordered_labels]
+    figure = _grouped(ordered_labels, ordered_values, lambda label: label[2:4], DBS_COLORS,
+                       sample, matrix.context, ytitle, fmt)
+    figure["layout"]["height"] = 570
+    return figure
 
 
 def _id83(matrix, sample, values, ytitle, fmt):
@@ -632,7 +676,7 @@ def render_sample(
         raw = matrix.sample_values(sample)
         values, ytitle, fmt = _unit(raw, unit)
         renderer = {
-            "SBS288": _sbs288, "DBS78": _dbs78,
+            "SBS288": _sbs288, "DBS78": _dbs78, "DBS1248": _dbs1248,
             "ID83": _id83, "ID89": _id89, "ID476": _id476,
             "CNV48": _cnv48, "SV32": _sv32,
         }.get(matrix.context, _generic)
