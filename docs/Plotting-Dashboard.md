@@ -86,7 +86,13 @@ Any of these will cleanly shut the server down:
 2. The dashboard detects the mutation context automatically from the
    complete set of row labels -- never from the filename or row count -- and
    lists every sample/signature column in the sidebar.
-3. **Choosing what to view:**
+3. **Theme:** the picker in the top-right corner switches between four
+   themes -- **UC San Diego** (the default), **UAlbany**, **SigProfilerSuite**,
+   and **Night** -- shared with SigRescuePy and the other SigProfiler Suite
+   workbenches. Your choice is remembered in the browser for next time.
+   Charts always draw on a white background regardless of theme, since they
+   use SigProfiler's own fixed mutation-type colors.
+4. **Choosing what to view:**
     * Use the search box, **Select all**, or **Clear all** to pick which
       samples/signatures to draw.
     * If the matrix has more than 100 samples/signatures, only the first one
@@ -96,14 +102,14 @@ Any of these will cleanly shut the server down:
     * Selected items render as you scroll; the dashboard never tries to draw
       every selected sample up front, so selecting hundreds at once stays
       responsive.
-4. **Values panel:** switch between **Counts** (raw numbers), **Percentage**
-   (share of the sample's total, 0-100%), and **Proportion** (the same
-   share, 0-1) at any time -- every open chart redraws immediately.
-5. For `SBS4608` and `SBS1536` matrices, an extra panel controls which
+5. **Values panel:** switch between **Counts** (raw numbers), **Percentage**
+   (share of the sample's total, 0-100% -- the default), and **Proportion**
+   (the same share, 0-1) at any time -- every open chart redraws immediately.
+6. For `SBS4608` and `SBS1536` matrices, an extra panel controls which
    panels of the multi-part figure are shown (see below).
-6. For `SBS96` matrices, selecting **exactly one** sample or signature
+7. For `SBS96` matrices, selecting **exactly one** sample or signature
    enables a **Compare with COSMIC** panel (see below).
-7. Every chart supports the standard Plotly toolbar: hover for exact values,
+8. Every chart supports the standard Plotly toolbar: hover for exact values,
    zoom/pan, reset the view, export as an SVG image (the camera button), and
    export as a one-page PDF (the disk button next to it).
 

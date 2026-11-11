@@ -179,8 +179,10 @@ sP.samplePortrait(sample_matrices_path, output_path, project, percentage=False)
 
 A local, browser-based dashboard lets you upload any supported matrix and
 explore it interactively (search/select samples, switch between
-counts/percentage/proportion, hover/zoom/pan/export) without writing any
-Python. For `SBS96`, `SBS288`, `SBS1536`, or `SBS4608` matrices, selecting a
+percentage/proportion/counts, hover/zoom/pan/export as SVG or PDF) without
+writing any Python. It shares its look with the other SigProfiler Suite
+workbenches, including a choice of four themes. For `SBS96`, `SBS288`,
+`SBS1536`, or `SBS4608` matrices, selecting a
 single sample or signature also lets you compare it against COSMIC
 reference signatures and see the 5 best cosine-similarity matches. This
 needs your own authorized local copy of COSMIC's data -- SigProfilerPlotting
