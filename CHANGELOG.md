@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+- A "Save plot as PDF" button in each plot's toolbar, next to the existing SVG export, via a new `/api/export/pdf` endpoint that wraps a browser-rasterized PNG in a one-page PDF (no Kaleido/Chrome needed, unlike the static SBS4608 PDF export).
+
 ### Fixed
 - Reject incomplete, duplicated, negative, or non-finite user-supplied COSMIC catalogues and ambiguous catalogue versions.
 - Keep COSMIC catalogue metadata synchronized when a file is replaced in place.
