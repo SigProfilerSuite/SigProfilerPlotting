@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 - Updated repository, maintainer, and contact metadata.
+- Restyled the interactive dashboard to match the shared SigProfiler Suite workbench design: four selectable themes (UC San Diego, UAlbany, SigProfilerSuite, Night), a glossy sidebar, card-based plot layout, status pills, and "?" explainer panels.
 
 ## [1.5.0] - 2026-11-06
 

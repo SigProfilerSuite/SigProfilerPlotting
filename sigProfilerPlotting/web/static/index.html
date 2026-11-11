@@ -3,111 +3,181 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SigProfilerPlotting Dashboard</title>
-<link rel="icon" href="data:,">
+<title>SigProfilerPlotting Workbench</title>
 <link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230A58AC'/><path d='M6 24l4-13 4 9 3-6 3 4 3-9 3 15' fill='none' stroke='white' stroke-width='2' stroke-linejoin='round' stroke-linecap='round'/></svg>">
 <script src="/plotly.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
-<header class="topbar">
-  <h1>SigProfilerPlotting <span>dashboard</span></h1>
-  <p id="matrixSummary" class="summary" aria-live="polite">No matrix loaded</p>
-  <button id="quitButton" type="button" class="quit-button">Quit</button>
-</header>
+<div class="app" id="app">
 
-<div class="shell">
-  <aside class="sidebar" aria-label="Controls">
-    <section class="panel">
-      <h2>Matrix</h2>
-      <label class="file-button" for="matrixFile">Choose a matrix file</label>
-      <input id="matrixFile" class="visually-hidden" type="file"
-             accept=".txt,.tsv,.csv,.all,text/plain,text/tab-separated-values,text/csv">
-      <p id="fileName" class="hint">Tab- or comma-delimited, with a MutationType column.</p>
-      <p id="matrixError" class="error hidden" role="alert"></p>
-      <p id="matrixWarning" class="warning hidden" role="status"></p>
-    </section>
-
-    <section class="panel" id="unitPanel">
-      <h2>Values</h2>
-      <div class="segmented three" role="radiogroup" aria-label="Values">
-        <label><input type="radio" name="unit" value="counts" checked><span>Counts</span></label>
-        <label><input type="radio" name="unit" value="percent"><span>Percentage</span></label>
-        <label><input type="radio" name="unit" value="proportion"><span>Proportion</span></label>
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">SP</span>
+      <div class="titles">
+        <h1>SigProfilerPlotting Workbench</h1>
       </div>
-    </section>
+    </div>
+    <div class="spacer"></div>
+    <div class="pick">
+      <select id="themeSel" title="Theme" aria-label="Theme">
+        <option value="sandiego">UC San Diego</option>
+        <option value="ualbany">UAlbany</option>
+        <option value="sigprofilersuite">SigProfilerSuite</option>
+        <option value="night">Night</option>
+      </select>
+    </div>
+    <button class="btn sm" id="quitButton" type="button" title="Stop the dashboard server">Quit</button>
+  </header>
 
-    <section class="panel hidden" id="cosmicPanel">
-      <h2>Compare with COSMIC</h2>
-      <label><input type="checkbox" id="cosmicEnabled"> Compare with COSMIC signatures</label>
-      <select id="cosmicBuild" disabled aria-label="COSMIC genome build"></select>
-      <p id="cosmicHint" class="hint">Select exactly one sample or signature to compare it.</p>
-    </section>
+  <div class="body">
+    <nav class="sidebar" aria-label="Matrix and plot controls">
+      <section>
+        <h3>Matrix</h3>
+        <label class="btn choose" for="matrixFile">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8L6.5 3h-4a1 1 0 0 0-1 1z"/></svg>
+          Choose a matrix file
+        </label>
+        <input id="matrixFile" class="visually-hidden" type="file"
+               accept=".txt,.tsv,.csv,.all,text/plain,text/tab-separated-values,text/csv">
+        <p id="fileName" class="hint" style="margin-top:8px">Tab- or comma-delimited, with a MutationType column.</p>
+        <p id="matrixError" class="note-box crit hidden" style="margin-top:8px" role="alert"></p>
+        <p id="matrixWarning" class="note-box warn hidden" style="margin-top:8px" role="status"></p>
+      </section>
 
-    <section class="panel hidden" id="variantPanel">
-      <h2 id="variantPanelTitle">SBS4608 view</h2>
-      <div id="topPanelGroup">
-        <p class="subhead">Top panel</p>
-        <div class="segmented three" role="radiogroup" aria-label="Top panel">
-          <label><input type="radio" name="variant" value="default" checked><span>Default</span></label>
-          <label><input type="radio" name="variant" value="strand_bias"><span>Strand bias</span></label>
-          <label><input type="radio" name="variant" value="genic_bias"><span>Genic bias</span></label>
+      <section id="unitPanel">
+        <h3>Values
+          <button type="button" class="about-btn" aria-expanded="false" aria-controls="about-units"
+                  aria-label="About these values" title="What these values mean">?</button>
+        </h3>
+        <div class="about" id="about-units" hidden><dl>
+          <dt>Counts</dt><dd>The raw number of mutations in each context, as stored in the matrix.</dd>
+          <dt>Percentage</dt><dd>Each context rescaled to the sample's own total, as a percent.</dd>
+          <dt>Proportion</dt><dd>The same rescaling as Percentage, as a fraction of 1 instead of 100.</dd>
+        </dl></div>
+        <div class="seg" role="radiogroup" aria-label="Values">
+          <label><input type="radio" name="unit" value="counts" checked>Counts</label>
+          <label><input type="radio" name="unit" value="percent">Percentage</label>
+          <label><input type="radio" name="unit" value="proportion">Proportion</label>
         </div>
-      </div>
-      <fieldset class="checks">
-        <legend class="subhead">Show</legend>
-        <label id="biasCheckboxRow"><input type="checkbox" id="opt-bias" name="section" value="transcription_bias" checked> Transcription bias</label>
-        <label><input type="checkbox" id="opt-total" name="section" value="total_heatmap" checked> 5-base context (total heatmap)</label>
-        <label><input type="checkbox" id="opt-detailed" name="section" value="detailed_heatmaps" checked> Detailed heatmaps (front/back)</label>
-      </fieldset>
-    </section>
+      </section>
 
-    <section class="panel grow" id="samplePanel">
-      <h2>Samples and signatures</h2>
-      <input id="sampleSearch" class="search" type="search" placeholder="Search"
-             aria-label="Search samples and signatures" disabled>
-      <div class="row">
-        <button id="selectAll" type="button" disabled>Select all</button>
-        <button id="clearAll" type="button" disabled>Clear all</button>
-      </div>
-      <p id="selectionCount" class="hint" aria-live="polite"></p>
-      <ul id="sampleList" class="sample-list" aria-label="Samples and signatures"></ul>
-      <p id="noMatch" class="hint hidden">Nothing matches the search.</p>
-    </section>
-  </aside>
+      <section class="hidden" id="cosmicPanel">
+        <h3>Compare with COSMIC</h3>
+        <label class="inline" style="font-size:13px"><input type="checkbox" id="cosmicEnabled"> Compare with COSMIC signatures</label>
+        <div class="pick" style="margin-top:8px"><select id="cosmicBuild" disabled aria-label="COSMIC genome build"></select></div>
+        <p id="cosmicHint" class="hint" style="margin-top:8px"></p>
+      </section>
 
-  <main class="content">
-    <div id="emptyState" class="empty">
-      <h2>Load a matrix to begin</h2>
-      <p>Choose a SigProfiler matrix file. Its mutation context is detected from the
-         rows, and each sample or signature you select is drawn as an interactive
-         plot: hover for values, drag to zoom, double-click to reset, and use the
-         toolbar above each plot to pan or download it.</p>
-    </div>
-    <div id="plots" class="plots"></div>
-    <div id="more" class="more hidden">
-      <p id="moreText" class="hint"></p>
-      <button id="loadMore" type="button">Load more</button>
-    </div>
-    <div id="sentinel" aria-hidden="true"></div>
-  </main>
+      <section class="hidden" id="variantPanel">
+        <h3 id="variantPanelTitle">SBS4608 view</h3>
+        <div id="topPanelGroup">
+          <p class="hint" style="margin-bottom:5px">Top panel</p>
+          <div class="seg" role="radiogroup" aria-label="Top panel">
+            <label><input type="radio" name="variant" value="default" checked>Default</label>
+            <label><input type="radio" name="variant" value="strand_bias">Strand bias</label>
+            <label><input type="radio" name="variant" value="genic_bias">Genic bias</label>
+          </div>
+        </div>
+        <fieldset class="checks" style="margin-top:10px">
+          <legend class="hint">Show</legend>
+          <label id="biasCheckboxRow"><input type="checkbox" id="opt-bias" name="section" value="transcription_bias" checked> Transcription bias</label>
+          <label><input type="checkbox" id="opt-total" name="section" value="total_heatmap" checked> 5-base context (total heatmap)</label>
+          <label><input type="checkbox" id="opt-detailed" name="section" value="detailed_heatmaps" checked> Detailed heatmaps (front/back)</label>
+        </fieldset>
+      </section>
+
+      <section class="grow" id="samplePanel">
+        <h3>Samples and signatures</h3>
+        <input id="sampleSearch" type="search" placeholder="Search"
+               aria-label="Search samples and signatures" disabled>
+        <div class="row" style="margin-top:8px">
+          <button class="btn sm" id="selectAll" type="button" disabled>Select all</button>
+          <button class="btn sm" id="clearAll" type="button" disabled>Clear all</button>
+        </div>
+        <p id="selectionCount" class="hint" style="margin-top:6px" aria-live="polite"></p>
+        <ul id="sampleList" class="sample-list" aria-label="Samples and signatures"></ul>
+        <p id="noMatch" class="hint hidden" style="padding:6px 2px">Nothing matches the search.</p>
+      </section>
+
+      <footer class="cite">
+        <h3>Citing this tool</h3>
+        <p class="ref">Bergstrom EN, Huang MN, Mahto U, Barnes M, Stratton MR,
+          Rozen SG, Alexandrov LB. SigProfilerMatrixGenerator: a tool for
+          visualizing and exploring patterns of small mutational events.
+          <i>BMC Genomics</i> 20, 685 (2019).</p>
+        <a href="https://doi.org/10.1186/s12864-019-6041-2"
+           target="_blank" rel="noopener noreferrer">doi.org/10.1186/s12864-019-6041-2</a>
+      </footer>
+    </nav>
+
+    <main class="main">
+      <header>
+        <p id="matrixSummary" aria-live="polite">No matrix loaded</p>
+        <div class="spacer"></div>
+      </header>
+
+      <section>
+        <div id="emptyState" class="empty-card">
+          <div class="bd">
+            <h2>Load a matrix to begin</h2>
+            <p>Choose a SigProfiler matrix file. Its mutation context is detected from the
+               rows, and each sample or signature you select is drawn as an interactive
+               plot: hover for values, drag to zoom, double-click to reset, and use the
+               toolbar above each plot to pan or download it.</p>
+          </div>
+        </div>
+        <div id="plots" class="plots"></div>
+        <div id="more" class="more hidden">
+          <p id="moreText" class="hint"></p>
+          <button class="btn" id="loadMore" type="button">Load more</button>
+        </div>
+        <div id="sentinel" aria-hidden="true"></div>
+      </section>
+    </main>
+  </div>
 </div>
 
+<dialog id="quitDialog">
+  <div class="hd"><h3>Stop the dashboard server?</h3></div>
+  <div class="msg">This closes the session for every open tab. Nothing you plotted is saved by stopping it.</div>
+  <div class="ft">
+    <button class="btn" id="quitCancel" type="button">Cancel</button>
+    <button class="btn danger" id="quitGo" type="button">Stop server</button>
+  </div>
+</dialog>
+
 <template id="cardTemplate">
-  <article class="card">
-    <h3 class="card-title"></h3>
-    <p class="card-status hint">Loading</p>
-    <div class="plot-scroll"><div class="plot"></div></div>
-    <div class="compare hidden">
-      <div class="compare-header">
-        <p class="subhead">Most similar COSMIC signatures</p>
-        <div class="compare-nav">
-          <button class="compare-prev" type="button" aria-label="Previous signature">&lsaquo;</button>
-          <span class="compare-position" aria-live="polite"></span>
-          <button class="compare-next" type="button" aria-label="Next signature">&rsaquo;</button>
+  <article class="card plot-card">
+    <div class="hd">
+      <h3 class="card-title"></h3>
+      <span class="card-status pill live">Loading</span>
+      <button type="button" class="about-btn" aria-expanded="false" aria-label="About this chart" title="What this chart shows">?</button>
+    </div>
+    <div class="about" hidden><dl>
+      <dt>How to read it</dt>
+      <dd>Hover a bar for its exact value, drag to zoom into a region, and
+        double-click the plot to reset the view.</dd>
+      <dt>Export</dt>
+      <dd>The camera button in the toolbar above the plot saves it as a PNG.</dd>
+      <dt>Compare matches</dt>
+      <dd>When shown below, these are the COSMIC signatures most similar to
+        this one by cosine similarity, highest first.</dd>
+    </dl></div>
+    <div class="bd">
+      <div class="plate"><div class="plot-scroll"><div class="plot"></div></div></div>
+      <div class="compare hidden">
+        <div class="compare-header">
+          <p class="hint">Most similar COSMIC signatures</p>
+          <div class="compare-nav">
+            <button class="btn sm compare-prev" type="button" aria-label="Previous signature">&lsaquo;</button>
+            <span class="compare-position" aria-live="polite"></span>
+            <button class="btn sm compare-next" type="button" aria-label="Next signature">&rsaquo;</button>
+          </div>
         </div>
+        <div class="compare-scroll"></div>
       </div>
-      <div class="compare-scroll"></div>
     </div>
   </article>
 </template>
