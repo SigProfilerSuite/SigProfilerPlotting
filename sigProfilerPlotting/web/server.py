@@ -12,6 +12,7 @@ most.
 
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import os
@@ -45,6 +46,15 @@ MAX_UPLOAD_BYTES = int(
     os.environ.get("SIGPROFILERPLOTTING_MAX_UPLOAD_BYTES", 4 * 1024 * 1024 * 1024)
 )
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+# A rasterized chart PNG is at most a few MB even at a generous export scale;
+# this is a safety cap against abuse, not a tight budget.
+MAX_EXPORT_PNG_BYTES = 64 * 1024 * 1024
+# Matches the static SBS4608 PDF export's own page-width convention (810pt,
+# i.e. 11.25in) closely enough that a plot exported either way looks similar
+# printed -- not meant to match it exactly, since this path serves a quick
+# snapshot of whatever is on screen rather than a release-quality artifact.
+_EXPORT_PDF_WIDTH_IN = 11.0
 
 # Defense-in-depth: 'unsafe-inline' is only for style-src (Plotly sets inline
 # styles on its generated elements); the dashboard's own JS has no inline
@@ -349,17 +359,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _dispatch_post(self) -> None:
         parsed = urlsplit(self.path)
-        if parsed.path == "/api/shutdown":
-            if not _allowed_origin(self.headers.get("Origin"), self._port()):
-                self._reject(HTTPStatus.FORBIDDEN, "Unrecognized Origin header.")
-                return
-            self._serve_shutdown()
-            return
-        if parsed.path != "/api/matrix":
+        if parsed.path not in ("/api/shutdown", "/api/matrix", "/api/export/pdf"):
             self._reject(HTTPStatus.NOT_FOUND, "Not found.")
             return
+        # Every POST route is state-changing (or at least does real work), so
+        # all of them require a matching Origin, not just the upload/shutdown
+        # routes this check originally guarded.
         if not _allowed_origin(self.headers.get("Origin"), self._port()):
             self._reject(HTTPStatus.FORBIDDEN, "Unrecognized Origin header.")
+            return
+        if parsed.path == "/api/shutdown":
+            self._serve_shutdown()
+            return
+        if parsed.path == "/api/export/pdf":
+            self._serve_export_pdf()
             return
 
         header = self.headers.get("Content-Length")
@@ -429,6 +442,74 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # stalling the client for the shutdown poll interval.
         self._write_json(HTTPStatus.OK, {"status": "stopping"})
         threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def _serve_export_pdf(self) -> None:
+        """Wrap a browser-rendered plot PNG in a one-page PDF.
+
+        The PNG itself is rasterized client-side by Plotly.js (the same
+        mechanism the toolbar's own "download plot as png" button already
+        uses) -- this endpoint only ever wraps an already-decoded raster
+        image, so unlike the static SBS4608 PDF export it needs neither
+        Kaleido nor a local Chrome/Chromium install.
+        """
+        header = self.headers.get("Content-Length")
+        try:
+            length = int(header)
+        except (TypeError, ValueError):
+            self._reject(
+                HTTPStatus.LENGTH_REQUIRED, "A valid Content-Length header is required."
+            )
+            return
+        if length <= 0:
+            self._reject(HTTPStatus.BAD_REQUEST, "No image data was received.")
+            return
+        if length > MAX_EXPORT_PNG_BYTES:
+            self._reject(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                f"The image ({length} bytes) exceeds the {MAX_EXPORT_PNG_BYTES}-byte limit.",
+            )
+            return
+        body = self.rfile.read(length)
+
+        from PIL import Image
+
+        try:
+            with Image.open(io.BytesIO(body)) as image:
+                image.load()
+                if image.mode in ("RGBA", "LA") or (
+                    image.mode == "P" and "transparency" in image.info
+                ):
+                    # Every chart already paints its own opaque white
+                    # background, so this only matters defensively -- PIL's
+                    # PDF writer requires RGB, and naively discarding alpha
+                    # instead of flattening it onto white would blacken
+                    # whatever was meant to show through as transparent.
+                    image = image.convert("RGBA")
+                    flattened = Image.new("RGB", image.size, "white")
+                    flattened.paste(image, mask=image.getchannel("A"))
+                    image = flattened
+                elif image.mode != "RGB":
+                    image = image.convert("RGB")
+                # A fixed page width keeps the PDF a sensible physical size
+                # regardless of how large Plotly happened to rasterize the
+                # image; height follows from the image's own aspect ratio.
+                dpi = image.width / _EXPORT_PDF_WIDTH_IN
+                buffer = io.BytesIO()
+                image.save(buffer, "PDF", resolution=dpi, quality=95, subsampling=0)
+        except (OSError, ValueError) as exc:
+            self._reject(
+                HTTPStatus.BAD_REQUEST, f"Could not build a PDF from the image: {exc}"
+            )
+            return
+
+        pdf_bytes = buffer.getvalue()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(pdf_bytes)))
+        self.send_header("Content-Security-Policy", _CONTENT_SECURITY_POLICY)
+        self.send_header("Content-Disposition", 'attachment; filename="plot.pdf"')
+        self.end_headers()
+        self.wfile.write(pdf_bytes)
 
     def _handle_unexpected_error(self, exc: Exception) -> None:
         # A bug anywhere in parsing/rendering must not silently drop the

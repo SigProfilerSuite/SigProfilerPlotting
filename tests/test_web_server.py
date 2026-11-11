@@ -771,3 +771,149 @@ def test_render_with_an_unknown_cosmic_build_is_rejected(running_server):
     resp = conn.getresponse()
     assert resp.status == 400
     conn.close()
+
+
+def _png_bytes(size=(40, 20), mode="RGB", color="white"):
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new(mode, size, color).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def test_export_pdf_wraps_a_png_in_a_one_page_pdf(running_server):
+    import io
+
+    from pypdf import PdfReader
+
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body = _png_bytes()
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/export/pdf",
+        body=body,
+        headers={
+            "Content-Type": "image/png",
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    assert resp.getheader("Content-Type") == "application/pdf"
+    assert resp.getheader("Content-Disposition") == 'attachment; filename="plot.pdf"'
+    pdf_bytes = resp.read()
+    conn.close()
+
+    assert pdf_bytes.startswith(b"%PDF")
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    assert len(reader.pages) == 1
+
+
+def test_export_pdf_flattens_transparency_onto_white(running_server):
+    import io
+
+    from PIL import Image
+    from pypdf import PdfReader
+
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body = _png_bytes(mode="RGBA", color=(0, 0, 0, 0))  # fully transparent
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/export/pdf",
+        body=body,
+        headers={
+            "Content-Type": "image/png",
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    pdf_bytes = resp.read()
+    conn.close()
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    page = reader.pages[0]
+    resources = page.get("/Resources", {}).get_object()
+    xobject = next(iter(resources.get("/XObject", {}).get_object().values())).get_object()
+    # A transparent source must not be embedded as-is (which would blacken
+    # whatever showed through in a viewer that defaults to a black canvas);
+    # it must have been flattened onto an opaque RGB image first.
+    assert xobject.get("/ColorSpace") in ("/DeviceRGB", None, "/DeviceGray")
+    image = Image.open(io.BytesIO(xobject.get_data()))
+    assert image.mode in ("RGB", "L", "CMYK")
+
+
+def test_export_pdf_requires_matching_origin(running_server):
+    body = _png_bytes()
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/export/pdf",
+        body=body,
+        headers={
+            "Content-Type": "image/png",
+            "Content-Length": str(len(body)),
+            "Origin": "http://evil.example.com",
+        },
+    )
+    resp = conn.getresponse()
+    assert resp.status == 403
+    conn.close()
+
+
+def test_export_pdf_rejects_malformed_image_data(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body = b"not a real png"
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/export/pdf",
+        body=body,
+        headers={
+            "Content-Type": "image/png",
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
+    )
+    resp = conn.getresponse()
+    assert resp.status == 400
+    assert b"Could not build a PDF" in resp.read()
+    conn.close()
+
+
+def test_export_pdf_rejects_an_oversized_image(running_server, monkeypatch):
+    from sigProfilerPlotting.web import server as server_module
+
+    monkeypatch.setattr(server_module, "MAX_EXPORT_PNG_BYTES", 10)
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    body = _png_bytes()
+    assert len(body) > 10
+
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/export/pdf",
+        body=body,
+        headers={
+            "Content-Type": "image/png",
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
+    )
+    resp = conn.getresponse()
+    assert resp.status == 413
+    conn.close()

@@ -410,6 +410,27 @@ def test_the_export_button_downloads_an_image(tmp_path):
         assert saved.read_text(encoding="utf-8").lstrip().startswith("<svg")
 
 
+def test_the_pdf_button_downloads_a_one_page_pdf(tmp_path):
+    path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1"])
+    with _dashboard() as page:
+        _upload(page, path, "SBS96", 1)
+        plot = _plot(page)
+        plot.hover()
+        with page.expect_download() as info:
+            plot.locator('.modebar-btn[data-title="Save plot as PDF"]').click()
+        download = info.value
+        assert download.suggested_filename == "Sample1_SBS96.pdf"
+        saved = tmp_path / download.suggested_filename
+        download.save_as(saved)
+
+        data = saved.read_bytes()
+        assert data.startswith(b"%PDF")
+        from pypdf import PdfReader
+
+        reader = PdfReader(saved)
+        assert len(reader.pages) == 1
+
+
 @pytest.mark.parametrize("context", ["SBS96", "DBS78", "ID89", "ID476"])
 @pytest.mark.parametrize("unit, whole", [("percent", 100.0), ("proportion", 1.0)])
 def test_a_unit_redraws_each_sample_as_shares_of_its_total(tmp_path, context, unit, whole):

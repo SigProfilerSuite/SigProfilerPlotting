@@ -415,6 +415,58 @@ function figureOf(card) {
   return null;
 }
 
+// Scale at which Plotly rasterizes a plot client-side before it is wrapped
+// in a PDF -- see exportPdf(). Matches the static SBS4608 PNG export's own
+// scale (sbs4608_static.py's _PNG_SCALE), not because the two paths share
+// code, but so a plot looks similarly crisp exported either way.
+const PDF_EXPORT_SCALE = 2;
+
+function safeFilename(name) {
+  return String(name).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'plot';
+}
+
+// Decodes a "data:image/png;base64,...." URL into a Blob without a fetch()
+// round trip -- the dashboard's CSP scopes connect-src to 'self', and a
+// data: URL is not guaranteed to be exempt from that in every browser.
+function dataUrlToBlob(dataUrl) {
+  const [header, base64] = dataUrl.split(',', 2);
+  const type = (header.match(/^data:([^;]+)/) || [, 'application/octet-stream'])[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type });
+}
+
+// The toolbar's built-in camera button already saves an SVG (see
+// renderers.py's toImageButtonOptions); this is a second, custom button
+// next to it for a PDF. Plotly.js can rasterize to PNG entirely client-side
+// (the same mechanism that button uses), so only wrapping that PNG in a
+// one-page PDF needs the server -- no Kaleido/Chrome round trip, unlike the
+// static SBS4608 export.
+async function exportPdf(gd, card) {
+  const dataUrl = await Plotly.toImage(gd, { format: 'png', scale: PDF_EXPORT_SCALE });
+  const png = dataUrlToBlob(dataUrl);
+  const response = await fetch('/api/export/pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/png' },
+    body: png,
+  });
+  const body = response.ok ? null : await readJson(response);
+  if (!response.ok) throw new Error(body.error || `The server answered ${response.status}.`);
+  const pdf = await response.blob();
+  const url = URL.createObjectURL(pdf);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeFilename(card.name)}_${safeFilename(state.context)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function draw(card) {
   const figure = figureOf(card);
   if (!figure) {
@@ -427,6 +479,13 @@ function draw(card) {
   const { traces, layout, config } = card.data.kind === 'sbs4608'
     ? { ...compactPlot(figure, state.toggles), config: structuredClone(figure.config) }
     : structuredClone(figure);
+  config.modeBarButtonsToAdd = [{
+    name: 'downloadPdf',
+    title: 'Save plot as PDF',
+    icon: Plotly.Icons.disk,
+    click: (gd) => exportPdf(gd, card).catch(
+      (e) => window.alert(`Could not download the PDF: ${e.message}`)),
+  }];
   const plot = card.drawn ? Plotly.react : Plotly.newPlot;
   card.pending = card.pending
     .then(() => (card.alive ? plot(card.plot, traces, layout, config) : null))
@@ -463,11 +522,18 @@ function drawCompareMatches(card) {
     const plotEl = el.querySelector('.plot');
     plotEl.setAttribute('aria-label', `${match.name}, cosine similarity ${match.score.toFixed(3)}`);
     frag.append(el);
-    toRender.push({ plotEl, figure: match.figure });
+    toRender.push({ plotEl, figure: match.figure, name: match.name });
   }
   scrollEl.replaceChildren(frag);
-  for (const { plotEl, figure } of toRender) {
+  for (const { plotEl, figure, name } of toRender) {
     const { traces, layout, config } = structuredClone(figure);
+    config.modeBarButtonsToAdd = [{
+      name: 'downloadPdf',
+      title: 'Save plot as PDF',
+      icon: Plotly.Icons.disk,
+      click: (gd) => exportPdf(gd, { name })
+        .catch((e) => window.alert(`Could not download the PDF: ${e.message}`)),
+    }];
     Plotly.newPlot(plotEl, traces, layout, config);
   }
   setupCompareNav(compareEl, scrollEl, compare.matches.length);

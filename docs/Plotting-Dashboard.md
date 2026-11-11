@@ -104,7 +104,8 @@ Any of these will cleanly shut the server down:
 6. For `SBS96` matrices, selecting **exactly one** sample or signature
    enables a **Compare with COSMIC** panel (see below).
 7. Every chart supports the standard Plotly toolbar: hover for exact values,
-   zoom/pan, reset the view, and export as a PNG or SVG image.
+   zoom/pan, reset the view, export as an SVG image (the camera button), and
+   export as a one-page PDF (the disk button next to it).
 
 ## Comparing against COSMIC signatures
 
