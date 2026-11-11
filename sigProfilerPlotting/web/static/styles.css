@@ -180,7 +180,6 @@ code,.mono { font-family:var(--mono); font-size:12.5px; }
 @media (max-width:760px){ .brand .sub { display:none; } }
 
 .body { display:grid; grid-template-columns:300px 1fr; min-height:0; }
-@media (max-width:900px){ .body { grid-template-columns:1fr; } .sidebar { display:none; } }
 
 .sidebar {
   --surface:var(--panel); --surface-2:var(--panel-2); --surface-3:var(--panel-3);
@@ -202,12 +201,28 @@ code,.mono { font-family:var(--mono); font-size:12.5px; }
   overflow-y:auto; padding:16px 12px; display:flex; flex-direction:column; gap:18px;
   z-index:1; min-height:0;
 }
+/* Unlike the other Suite workbenches, the sidebar here is not supplementary
+   navigation -- it is the only place to choose a matrix or select samples,
+   with no equivalent control anywhere in .main, so narrow widths stack it
+   above the plots instead of hiding it (must come after the base .sidebar
+   rule above: same-specificity CSS rules resolve by source order). */
+@media (max-width:900px){
+  .body { grid-template-columns:1fr; }
+  .sidebar { border-right:0; border-bottom:1px solid var(--panel-edge); max-height:50vh; }
+}
 .sidebar .btn:not(.ghost):not(.choose) { background-image:var(--panel-chip); }
 .sidebar input[type=text],.sidebar input[type=search] { box-shadow:var(--panel-well); }
 .sidebar h3 { color:var(--muted); text-transform:uppercase; letter-spacing:.07em;
   font-size:10.5px; margin-bottom:8px; display:flex; align-items:center;
   justify-content:space-between; gap:8px; }
-.sidebar section.grow { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+/* Not flex-grow: when the panels above (COSMIC, SBS4608 view) are both
+   visible their combined content can exceed the sidebar's own height, and a
+   flex-grow sibling fighting them for the remaining space can be squeezed
+   to near zero while its min-height child still renders at full size,
+   overflowing into whatever comes after it. The list below is sized on its
+   own terms (min/max-height with its own scrollbar) instead, so it can
+   never depend on winning that contest. */
+.sidebar section.grow { display:flex; flex-direction:column; }
 .cite { margin-top:auto; padding-top:14px; border-top:1px solid var(--line); }
 .cite p { margin:0 0 7px; font-size:11.5px; line-height:1.5; color:var(--muted); }
 .cite p.ref { color:var(--ink-2); }
@@ -366,7 +381,7 @@ dialog .ft { display:flex; gap:9px; justify-content:flex-end; padding:12px 18px;
 /* -------------------------------------------------------- sample list */
 
 .sample-list { list-style:none; margin:0; padding:0;
-  flex:1 1 auto; min-height:120px; overflow-y:auto;
+  min-height:120px; max-height:min(420px, 42vh); overflow-y:auto;
   border-top:1px solid var(--line); }
 .sample-list li { border-bottom:1px solid var(--line); }
 .sample-list label { display:flex; align-items:center; gap:8px;
