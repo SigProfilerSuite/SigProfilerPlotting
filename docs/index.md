@@ -11,8 +11,9 @@ other SigProfiler tools and accepts their tabular matrix outputs.
   ID476 indel schemes.
 - A dedicated SBS4608 interactive HTML report and portable multi-page PDF.
 - A local interactive dashboard with search, sample/signature selection,
-  counts/percentage/proportion controls, Plotly export, and optional COSMIC
-  comparison using a user-supplied authorized catalogue.
+  percentage/proportion/counts controls, SVG/PDF export, a choice of four
+  themes, and optional COSMIC comparison using a user-supplied authorized
+  catalogue.
 - One-click dashboard launchers for macOS, Linux, and Windows.
 - Combined sample portraits assembled from SBS, DBS, and ID matrices.
 
