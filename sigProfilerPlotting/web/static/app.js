@@ -19,6 +19,45 @@ const COSMIC_COMPATIBLE_CONTEXTS = new Set(['SBS96', 'SBS288', 'SBS1536', 'SBS46
 
 const $ = (id) => document.getElementById(id);
 
+/* --------------------------------------------------------------- theme */
+
+const THEMES = ['sandiego', 'ualbany', 'sigprofilersuite', 'night'];
+
+function currentTheme() {
+  const set = document.documentElement.getAttribute('data-theme');
+  if (THEMES.includes(set)) return set;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'sandiego';
+}
+
+function applyTheme(name) {
+  if (!THEMES.includes(name)) return;
+  document.documentElement.setAttribute('data-theme', name);
+  try { localStorage.setItem('spp-theme', name); } catch (e) { /* private mode */ }
+  $('themeSel').value = currentTheme();
+}
+
+(function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem('spp-theme'); } catch (e) { saved = null; }
+  if (THEMES.includes(saved)) document.documentElement.setAttribute('data-theme', saved);
+  $('themeSel').value = currentTheme();
+  $('themeSel').addEventListener('change', (e) => applyTheme(e.target.value));
+})();
+
+/* -------------------------------------------------------------- about ? */
+
+function wireAbout(button) {
+  button.addEventListener('click', () => {
+    const panel = button.getAttribute('aria-controls')
+      ? $(button.getAttribute('aria-controls'))
+      : button.closest('.card').querySelector('.about');
+    if (!panel) return;
+    const open = panel.hasAttribute('hidden');
+    panel.toggleAttribute('hidden', !open);
+    button.setAttribute('aria-expanded', String(open));
+  });
+}
+
 const state = {
   context: null,
   samples: [],            // column order, as in the matrix
@@ -315,6 +354,7 @@ function makeCard(name) {
   const plot = el.querySelector('.plot');
   plot.setAttribute('aria-label', `Plot of ${name}`);
   el.dataset.state = 'loading';
+  wireAbout(el.querySelector('.about-btn'));
   return {
     name, el, plot, status: el.querySelector('.card-status'),
     data: null, token: 0, alive: true, drawn: false, pending: Promise.resolve(),
@@ -333,10 +373,12 @@ function dropCard(name) {
   state.cards.delete(name);
 }
 
+const STATUS_PILL_KIND = { loading: 'live', error: 'crit' };
+
 function setStatus(card, text, kind) {
   card.status.textContent = text;
+  card.status.className = `card-status pill ${STATUS_PILL_KIND[kind] || 'flat'}`;
   card.status.classList.toggle('hidden', !text);
-  card.status.classList.toggle('error', kind === 'error');
   card.el.dataset.state = kind || (text ? 'loading' : 'ready');
 }
 
@@ -627,12 +669,8 @@ function onToggle(section, on) {
 }
 
 async function quit() {
-  if (!window.confirm('Stop the SigProfilerPlotting dashboard server? This closes the session for every open tab.')) {
-    return;
-  }
-  const button = $('quitButton');
-  button.disabled = true;
-  button.textContent = 'Stopping...';
+  $('quitGo').disabled = true;
+  $('quitGo').textContent = 'Stopping...';
   try {
     let token = '';
     try {
@@ -648,11 +686,16 @@ async function quit() {
     // The server closes its socket as part of shutting down, so the fetch
     // itself failing (rather than resolving) is the expected success case.
   }
+  $('quitDialog').close();
   document.body.innerHTML = '';
   document.title = 'SigProfilerPlotting dashboard (stopped)';
-  const message = document.createElement('p');
-  message.className = 'stopped-message';
-  message.textContent = 'The dashboard server has stopped. You can close this tab.';
+  const message = document.createElement('div');
+  message.className = 'stopped';
+  const heading = document.createElement('h2');
+  heading.textContent = 'The workbench has stopped.';
+  const text = document.createElement('p');
+  text.textContent = 'You can close this tab. Start it again with launch_dashboard.sh, or with sigprofilerplotting-web.';
+  message.append(heading, text);
   document.body.appendChild(message);
 }
 
@@ -685,7 +728,10 @@ function init() {
     c.addEventListener('change', () => onToggle(c.value, c.checked)));
   $('cosmicEnabled').addEventListener('change', onCosmicChange);
   $('cosmicBuild').addEventListener('change', onCosmicChange);
-  $('quitButton').addEventListener('click', quit);
+  $('quitButton').addEventListener('click', () => $('quitDialog').showModal());
+  $('quitCancel').addEventListener('click', () => $('quitDialog').close());
+  $('quitGo').addEventListener('click', quit);
+  document.querySelectorAll('.about-btn[aria-controls]').forEach(wireAbout);
 
   loadCosmicBuilds();
 
