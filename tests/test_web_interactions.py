@@ -440,7 +440,14 @@ def test_a_unit_redraws_each_sample_as_shares_of_its_total(tmp_path, context, un
     with _dashboard() as page:
         _upload(page, path, context, 2)
         total = "gd => gd.data.reduce((s, t) => s + t.y.reduce((a, b) => a + b, 0), 0)"
-        assert _plot(page).evaluate(total) > 100
+        # Counts are unbounded, unlike either target unit -- force it first
+        # so this sanity check holds regardless of the dashboard's own
+        # default unit.
+        page.check('input[name="unit"][value="counts"]', force=True)
+        page.wait_for_function(
+            "() => { const gd = document.querySelectorAll('.card .js-plotly-plot')[0];"
+            " return gd && gd.data.reduce((s, t) => s + t.y.reduce((a, b) => a + b, 0), 0) > 100; }"
+        )
         page.check(f'input[name="unit"][value="{unit}"]', force=True)
         page.wait_for_function(
             "whole => [...document.querySelectorAll('.card .js-plotly-plot')]"
@@ -460,9 +467,9 @@ def test_sbs4608_unit_toggle_changes_the_plot(tmp_path):
     with _dashboard() as page:
         _upload(page, path, "SBS4608", 1)
         title = "gd => gd.layout.yaxis.title.text"
-        assert _plot(page).evaluate(title) == titles["counts"]  # the default unit
+        assert _plot(page).evaluate(title) == titles["percent"]  # the default unit
 
-        for unit in ("percent", "proportion", "counts"):
+        for unit in ("counts", "proportion", "percent"):
             page.check(f'input[name="unit"][value="{unit}"]', force=True)
             page.wait_for_function(
                 "want => { const gd = document.querySelectorAll('.card .js-plotly-plot')[0];"

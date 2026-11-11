@@ -63,7 +63,7 @@ const state = {
   samples: [],            // column order, as in the matrix
   items: [],              // {name, lower, li, input}
   selected: new Set(),
-  unit: 'counts',
+  unit: 'percent',
   variant: 'default',
   // SBS4608 panels shown, as in plotInteractive: all on to begin with.
   toggles: { transcription_bias: true, total_heatmap: true, detailed_heatmaps: true },
