@@ -278,6 +278,11 @@ async function loadCosmicBuilds() {
     select.append(option);
   }
   state.cosmic.build = state.cosmic.builds[0] || null;
+  // This fetch runs once at page load and races whatever the reader does
+  // next (upload a matrix, narrow the selection to one sample). Re-sync
+  // the checkbox/hint now in case that race left them showing a stale
+  // "no catalogue yet" state that nothing else would otherwise refresh.
+  syncCosmicControls();
 }
 
 function onCosmicChange() {

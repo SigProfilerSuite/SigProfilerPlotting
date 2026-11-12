@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Omit, with a visible dashboard warning, ID476 signature columns R-padded with `NA` for an unresolved or entirely missing context instead of zero-filling them; reject any other `NA` pattern as a corrupted matrix.
 - Stopped the dashboard's "Samples and signatures" sidebar panel from overlapping the citation footer when the COSMIC and SBS4608 view panels were both visible at once and their combined height left the sample list no room to lay out.
 - Fixed a dead dashboard CSS rule that could never hide the sidebar at narrow widths (a same-specificity override declared before, instead of after, the base rule it was meant to win against); replaced it with a rule that keeps the sidebar's matrix/sample controls reachable by stacking it above the plots instead of hiding it, since nothing in the main content duplicates them.
+- Fixed DBS1248's dashboard renderer grouping bars by flank prefix instead of by reference dinucleotide, and DBS78's renderer reusing colors across different reference dinucleotides.
+- Fixed the dashboard's "Compare with COSMIC signatures" checkbox staying stuck disabled, with a stale hint, if a matrix was uploaded and narrowed to one sample before the one-time COSMIC catalogue scan at page load had finished.
 
 ### Changed
 - Updated repository, maintainer, and contact metadata.
