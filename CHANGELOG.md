@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - 2026-11-11
 
 ### Added
 - A "Save plot as PDF" button in each plot's toolbar, next to the existing SVG export, via a new `/api/export/pdf` endpoint that wraps a browser-rasterized PNG in a one-page PDF (no Kaleido/Chrome needed, unlike the static SBS4608 PDF export).
