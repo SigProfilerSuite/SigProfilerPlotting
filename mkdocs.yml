@@ -72,8 +72,9 @@ nav:
     - Plotting ID89/ID476: Plotting-ID89-ID476.md
     - Plotting Dinucleotides: Plotting-Dinucleotides.md
     - Plotting a Sample Portrait: Plotting-a-Sample-Portrait.md
-    - Interactive Dashboard: Plotting-Dashboard.md
     - Example Program: Example-Program.md
+  - Graphical Interface:
+    - Interactive Dashboard: Plotting-Dashboard.md
   - Maintenance:
     - Release and Publication: Release-and-Publication.md
 
