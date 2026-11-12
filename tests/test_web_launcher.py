@@ -353,6 +353,60 @@ def test_is_process_alive_false_for_an_unused_pid():
     assert launcher._is_process_alive(999999999) is False
 
 
+@pytest.mark.parametrize("pid", [0, -1])
+def test_is_process_alive_false_for_non_positive_pids(pid):
+    assert launcher._is_process_alive(pid) is False
+
+
+# -- Regression: on Windows, os.kill(pid, 0) is not a liveness probe -- signal
+# 0 there is CTRL_C_EVENT, so the call sends Ctrl+C to every process on the
+# console, including the caller. This bit `--stop` whenever it found the
+# startup lock still held by the server it had just stopped (it then checked
+# that server's pid for liveness) -- see _acquire_startup_lock. -------------
+
+
+def test_windows_never_checks_liveness_with_os_kill(monkeypatch):
+    # Runs on every platform, so a change that brings os.kill back for
+    # Windows fails here too, not only on a Windows CI job.
+    def no_kill(*args):
+        raise AssertionError("os.kill must not be used to check a process on Windows")
+
+    checked = []
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(os, "kill", no_kill)
+    monkeypatch.setattr(
+        launcher, "_windows_process_alive", lambda pid: checked.append(pid) or True
+    )
+    assert launcher._is_process_alive(4321) is True
+    assert checked == [4321]
+
+
+def test_waiting_for_another_launchs_lock_sends_no_ctrl_c(tmp_path, monkeypatch):
+    # What failed on Windows CI: --stop found the startup lock still held by
+    # the server it had just stopped, and checked whether that server was
+    # alive -- reproduced here with a real same-console child process rather
+    # than mocking the liveness check itself, so an unguarded os.kill(pid, 0)
+    # would actually raise KeyboardInterrupt in this test process.
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        launcher._lockfile().write_text(str(child.pid))
+        assert launcher._acquire_startup_lock(timeout=0.5) is None
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_a_lock_left_by_a_process_that_exited_is_reclaimed(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "_state_dir", lambda: tmp_path)
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    launcher._lockfile().write_text(str(child.pid))
+    lock = launcher._acquire_startup_lock(timeout=1.0)
+    assert lock is not None
+    lock.unlink()
+
+
 def test_running_dashboard_url_is_none_without_a_pidfile(tmp_path):
     assert launcher._running_dashboard_url(tmp_path / "dashboard.pid") is None
 

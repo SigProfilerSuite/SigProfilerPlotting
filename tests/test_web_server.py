@@ -917,3 +917,110 @@ def test_export_pdf_rejects_an_oversized_image(running_server, monkeypatch):
     resp = conn.getresponse()
     assert resp.status == 413
     conn.close()
+
+
+def test_examples_endpoint_lists_the_bundled_examples(running_server):
+    conn = _connection(running_server)
+    conn.request("GET", "/api/examples")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    body = json.loads(resp.read())
+    names = {entry["name"] for entry in body["examples"]}
+    assert {"sbs96", "sbs288", "dbs78", "id83", "cnv48", "sv32"} <= names
+    for entry in body["examples"]:
+        assert entry["context"]
+        assert entry["label"]
+    conn.close()
+
+
+def test_loading_a_bundled_example_replaces_the_current_matrix(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/examples/load?name=sbs96",
+        body=b"",
+        headers={"Content-Length": "0", "Origin": origin},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    body = json.loads(resp.read())
+    assert body["context"] == "SBS96"
+    assert len(body["samples"]) > 0
+    conn.close()
+
+    # A render can be served straight from the bundled file afterward, the
+    # same as it would be from an uploaded temp file.
+    conn = _connection(running_server)
+    conn.request("GET", f"/api/render?sample={body['samples'][0]}&unit=counts")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    conn.close()
+
+
+def test_loading_an_unknown_example_is_rejected(running_server):
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/examples/load?name=does-not-exist",
+        body=b"",
+        headers={"Content-Length": "0", "Origin": origin},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 404
+    conn.close()
+
+
+def test_loading_an_example_requires_matching_origin(running_server):
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/examples/load?name=sbs96",
+        body=b"",
+        headers={"Content-Length": "0", "Origin": "http://evil.example.com"},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 403
+    conn.close()
+
+
+def test_loading_an_example_does_not_delete_its_bundled_file(running_server):
+    """An example's path belongs to the installed package, not to the
+    server -- replacing it with another matrix (or another example) must
+    never unlink it the way an upload's own temp file is cleaned up."""
+    from sigProfilerPlotting.web import examples
+
+    path = examples.example_path("sbs96")
+    assert path is not None and path.is_file()
+
+    port = running_server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/examples/load?name=sbs96",
+        body=b"",
+        headers={"Content-Length": "0", "Origin": origin},
+    )
+    assert conn.getresponse().status == 200
+    conn.close()
+
+    body, content_type = _matrix_body(_sbs6_tsv())
+    conn = _connection(running_server)
+    conn.request(
+        "POST",
+        "/api/matrix",
+        body=body,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Origin": origin,
+        },
+    )
+    assert conn.getresponse().status == 200
+    conn.close()
+
+    assert path.is_file()

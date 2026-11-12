@@ -165,7 +165,13 @@ code,.mono { font-family:var(--mono); font-size:12.5px; }
   background:var(--surface); border-bottom:1px solid var(--line);
   box-shadow:inset 0 -3px 0 -1px var(--accent);
 }
-.brand { display:flex; align-items:center; gap:10px; min-width:0; }
+.brand {
+  display:flex; align-items:center; gap:10px; min-width:0;
+  background:none; border:none; padding:2px 4px; margin:-2px -4px; font:inherit;
+  color:inherit; cursor:pointer; border-radius:var(--radius-sm);
+}
+.brand:hover { background:var(--surface-2); }
+.brand:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 .brand .mark {
   width:28px; height:28px; border-radius:7px; flex:0 0 auto;
   background:linear-gradient(145deg, var(--accent) 0%, var(--accent-2) 100%);
@@ -394,9 +400,29 @@ dialog .ft { display:flex; gap:9px; justify-content:flex-end; padding:12px 18px;
 
 .empty-card { background:var(--surface); border:1px solid var(--line);
   border-radius:var(--radius); box-shadow:var(--shadow);
-  max-width:62ch; margin:48px auto; }
-.empty-card > .bd { padding:16px; text-align:center; color:var(--ink-2); }
-.empty-card h2 { color:var(--ink); font-size:18px; margin-bottom:8px; }
+  max-width:860px; margin:48px auto; }
+.empty-card > .bd { padding:24px; text-align:center; color:var(--ink-2); }
+.empty-card h2 { color:var(--ink); font-size:19px; margin-bottom:8px; }
+
+/* flex, not grid: an incomplete last row (6 cards don't divide evenly into
+   3 columns) wraps onto its own line, and justify-content:center centers
+   that line's leftover cards instead of leaving them stranded against the
+   left edge with a lopsided gap on the right. */
+.context-grid { display:flex; flex-wrap:wrap; justify-content:center;
+  gap:12px; margin-top:18px; text-align:left; }
+.context-card { flex:1 1 230px; max-width:300px; display:flex; gap:12px;
+  padding:13px 14px; border:1px solid var(--line-strong);
+  border-radius:var(--radius-sm); background:var(--surface-3); box-shadow:var(--shadow); }
+.context-icon {
+  width:34px; height:34px; border-radius:8px; flex:0 0 auto;
+  display:grid; place-items:center; background:var(--accent); color:var(--accent-ink);
+}
+.context-icon svg { width:19px; height:19px; }
+.context-card-body { min-width:0; }
+.context-card h3 { font-size:13.5px; margin:0 0 3px; color:var(--ink); }
+.context-card p { margin:0; font-size:12px; color:var(--ink-2); line-height:1.45; }
+.context-examples { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+.context-examples:empty { display:none; }
 
 .plots { display:flex; flex-direction:column; gap:16px; }
 

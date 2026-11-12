@@ -93,7 +93,11 @@ Any of these will cleanly shut the server down:
    signature. The first column's header can be named `MutationType`,
    `Mutation Types`, `classification`, `index`, `context`, or simply left blank -- all
    of these are accepted, matching the different ways SigProfiler tools and `pandas`
-   themselves name (or don't name) that column.
+   themselves name (or don't name) that column. Not ready with your own data yet? The
+   home screen groups what the dashboard supports into cards by mutation class, each
+   with a **Try `<context>`** button that loads a real example matrix with a single
+   click. Click the logo/title in the top-left corner at any time to come back to this
+   home screen -- it clears whatever matrix is loaded, the same as reloading the page.
 2. The dashboard detects the mutation context automatically from the complete set of
    row labels -- never from the filename or row count -- and lists every
    sample/signature column in the sidebar.

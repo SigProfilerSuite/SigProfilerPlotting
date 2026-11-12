@@ -61,8 +61,10 @@ setup(
         ],
     },
     # No COSMIC catalogue data is bundled or distributed here -- see
-    # sigProfilerPlotting/web/cosmic.py's module docstring.
-    package_data={"": ["fonts/*.ttf", "web/static/*"]},
+    # sigProfilerPlotting/web/cosmic.py's module docstring. The bundled
+    # example matrices (examples/input/*) are tiny and are what the
+    # dashboard's "Try an example" buttons load -- see web/examples.py.
+    package_data={"": ["fonts/*.ttf", "web/static/*", "examples/input/*"]},
     include_package_data=True,
     zip_safe=False,
 )
