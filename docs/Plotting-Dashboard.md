@@ -1,9 +1,8 @@
 # Interactive Dashboard
 
-SigProfilerPlotting includes a local, browser-based dashboard for exploring
-any supported matrix interactively -- upload a file, pick samples or
-signatures, and get real Plotly charts with hover, zoom, pan, and image
-export, without writing any Python.
+The **SigProfilerPlotting Workbench** is a local, browser-based dashboard for exploring
+any supported matrix interactively -- upload a file, pick samples or signatures, and get
+real Plotly charts with hover, zoom, pan, and image export, without writing any Python.
 
 !!! note
     The dashboard runs entirely on your machine. It binds only to
@@ -11,51 +10,64 @@ export, without writing any Python.
     load a matrix is through your browser's own file picker -- there is no
     server-side file browser and no network upload.
 
+![The Workbench's home page](assets/images/web-app/home.png)
+
 ## Launching the dashboard
 
 There are two ways to run the dashboard, depending on how you got the code.
 
-### From a cloned repository
+=== "macOS"
 
-Open a terminal in the repository root (the folder containing
-`launch_dashboard.sh`) and run the launcher for your platform:
+    In the repository root, double-click **`launch_dashboard.command`** in Finder, or run
+    in a terminal:
 
-| Platform | How to launch |
-| --- | --- |
-| macOS | `./launch_dashboard.sh`, or double-click `launch_dashboard.command` in Finder |
-| Linux | `./launch_dashboard.sh` |
-| Windows | Double-click `launch_dashboard.bat`, or run `launch_dashboard.bat` from a terminal/PowerShell |
+    ```bash
+    ./launch_dashboard.sh
+    ```
 
-The first time you run it, the launcher creates an isolated `.venv-dashboard`
-virtual environment next to it and installs the package into it. This can
-take a minute or two. Every later launch reuses that environment and starts
-in a couple of seconds -- you'll see `Dependencies already installed;
-skipping install.` printed instead of an install running.
+=== "Linux"
 
-### From a `pip install`
+    In a terminal, in the repository root:
 
-Install the package as usual and run the console script it provides. This
-runs directly in whatever Python environment you installed it into -- no
-separate virtual environment is created or managed for you:
+    ```bash
+    ./launch_dashboard.sh
+    ```
 
-```console
-pip install SigProfilerPlotting
-sigprofilerplotting-web
-```
+=== "Windows"
 
-### What happens next
+    Double-click **`launch_dashboard.bat`** in the repository root, or run it from a
+    terminal or PowerShell:
 
-Either way, once the server is ready your default browser opens
-automatically to the dashboard, and the terminal prints the URL it's running
-at (`http://127.0.0.1:<port>/`) along with a reminder of how to stop it.
-If a dashboard is already running, launching again does not start a second
-copy -- it prints the existing one's URL and exits.
+    ```console
+    launch_dashboard.bat
+    ```
+
+=== "Installed with pip"
+
+    If SigProfilerPlotting is already installed in a Python environment, the console
+    script it provides runs directly in that environment -- no separate virtual
+    environment is created or managed for you:
+
+    ```console
+    pip install SigProfilerPlotting
+    sigprofilerplotting-web
+    ```
+
+The first time you run a launcher script, it creates an isolated `.venv-dashboard`
+virtual environment next to it and installs the package into it. This can take a minute
+or two. Every later launch reuses that environment and starts in a couple of seconds --
+you'll see `Dependencies already installed; skipping install.` printed instead of an
+install running.
+
+Either way, once the server is ready your default browser opens automatically to the
+dashboard, and the terminal prints the URL it's running at (`http://127.0.0.1:<port>/`)
+along with a reminder of how to stop it. If a dashboard is already running, launching
+again does not start a second copy -- it prints the existing one's URL and exits.
 
 ### Command-line options
 
-All of these work with any of the launcher scripts, `sigprofilerplotting-web`,
-or `SigProfilerPlotting dashboard` (the CLI subcommand, if you prefer
-invoking it that way):
+All of these work with any of the launcher scripts, `sigprofilerplotting-web`, or
+`SigProfilerPlotting dashboard` (the CLI subcommand, if you prefer invoking it that way):
 
 | Flag | Effect |
 | --- | --- |
@@ -76,22 +88,18 @@ Any of these will cleanly shut the server down:
 
 ## Using the dashboard
 
-1. Click **Choose a matrix file** (or drag a file onto it) to upload a tab-
-   or comma-delimited matrix with a mutation-context column and one column
-   per sample or signature. The first column's header can be named
-   `MutationType`, `Mutation Types`, `classification`, `index`, `context`,
-   or simply left blank -- all of these are accepted, matching the different
-   ways SigProfiler tools and `pandas` themselves name (or don't name) that
-   column.
-2. The dashboard detects the mutation context automatically from the
-   complete set of row labels -- never from the filename or row count -- and
-   lists every sample/signature column in the sidebar.
-3. **Theme:** the picker in the top-right corner switches between four
-   themes -- **UC San Diego** (the default), **UAlbany**, **SigProfilerSuite**,
-   and **Night** -- shared with SigRescuePy and the other SigProfiler Suite
-   workbenches. Your choice is remembered in the browser for next time.
-   Charts always draw on a white background regardless of theme, since they
-   use SigProfiler's own fixed mutation-type colors.
+1. Click **Choose a matrix file** (or drag a file onto it) to upload a tab- or
+   comma-delimited matrix with a mutation-context column and one column per sample or
+   signature. The first column's header can be named `MutationType`,
+   `Mutation Types`, `classification`, `index`, `context`, or simply left blank -- all
+   of these are accepted, matching the different ways SigProfiler tools and `pandas`
+   themselves name (or don't name) that column.
+2. The dashboard detects the mutation context automatically from the complete set of
+   row labels -- never from the filename or row count -- and lists every
+   sample/signature column in the sidebar.
+3. **Theme:** the picker in the top-right corner switches between four themes (see
+   [Themes](#themes)). Charts always draw on a white background regardless of theme,
+   since they use SigProfiler's own fixed mutation-type colors.
 4. **Choosing what to view:**
     * Use the search box, **Select all**, or **Clear all** to pick which
       samples/signatures to draw.
@@ -106,12 +114,14 @@ Any of these will cleanly shut the server down:
    (share of the sample's total, 0-100% -- the default), and **Proportion**
    (the same share, 0-1) at any time -- every open chart redraws immediately.
 6. For `SBS4608` and `SBS1536` matrices, an extra panel controls which
-   panels of the multi-part figure are shown (see below).
-7. For `SBS96` matrices, selecting **exactly one** sample or signature
-   enables a **Compare with COSMIC** panel (see below).
+   panels of the multi-part figure are shown (see [below](#supported-contexts)).
+7. For `SBS96`, `SBS288`, `SBS1536`, and `SBS4608` matrices, selecting **exactly one**
+   sample or signature enables a **Compare with COSMIC** panel (see below).
 8. Every chart supports the standard Plotly toolbar: hover for exact values,
    zoom/pan, reset the view, export as an SVG image (the camera button), and
    export as a one-page PDF (the disk button next to it).
+
+![Plots drawn from an uploaded SBS96 matrix](assets/images/web-app/plots.png)
 
 ## Comparing against COSMIC signatures
 
@@ -153,6 +163,8 @@ checksum it will compare against. The plot splits into two panels:
   panel) and labeled with its cosine similarity score. One is shown at a
   time, highest-similarity first; scroll the panel, or use the **‹**/**›**
   buttons, to move through the rest.
+
+![A sample compared against its closest COSMIC signature](assets/images/web-app/cosmic-compare.png)
 
 `SBS288` (strand-tagged trinucleotide), `SBS1536` (pentanucleotide), and
 `SBS4608` (strand-tagged pentanucleotide) are compared by first collapsing
@@ -199,6 +211,19 @@ sizes `SBS6`, `SBS18`, `SBS24`, `SBS384`, `SBS6144`, the other `DBS`/`ID`
 sizes (`DBS150`, `DBS186`, `DBS1248`, `DBS2400`, `DBS2976`, `ID28`, `ID96`,
 `ID332`, `ID415`, `ID8628`), and so on -- is never rejected; it renders with
 a generic grouped bar view instead of a specialized one.
+
+![The SBS4608 multi-panel view](assets/images/web-app/sbs4608-view.png)
+
+## Themes
+
+The menu in the top bar switches between four themes -- **UC San Diego**
+(the default), **UAlbany**, **SigProfilerSuite**, and **Night** -- shared
+with the other SigProfiler Suite workbenches. Your choice is remembered in
+the browser for next time. Charts always draw on a white background
+regardless of theme, since they use SigProfiler's own fixed mutation-type
+colors.
+
+![The Night theme](assets/images/web-app/theme-night.png)
 
 ## Common input errors
 

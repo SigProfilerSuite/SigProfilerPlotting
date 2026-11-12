@@ -190,6 +190,8 @@ does not bundle or redistribute it (see
 [the dashboard docs](docs/Plotting-Dashboard.md#comparing-against-cosmic-signatures)).
 It runs entirely on your machine and never sends data anywhere else.
 
+![The SigProfilerPlotting Workbench](https://raw.githubusercontent.com/SigProfilerSuite/SigProfilerPlotting/master/docs/assets/images/web-app/home.png)
+
 **How to launch it:**
 
 * **Already have the repo cloned?** Open a terminal in the repository root
