@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from . import examples
 from .matrix import MatrixError, load_matrix
 from .renderers import render_sample
 
@@ -240,6 +241,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._serve_render(parse_qs(parsed.query))
             elif path == "/api/cosmic/builds":
                 self._serve_cosmic_builds()
+            elif path == "/api/examples":
+                self._serve_examples_list()
             elif path == "/api/identity":
                 self._serve_identity()
             else:
@@ -338,6 +341,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _serve_examples_list(self) -> None:
+        self._write_json(HTTPStatus.OK, {"examples": examples.available()})
+
     def _serve_identity(self) -> None:
         # Loopback-only (every GET already passes _check_host()) proof of
         # which process is actually listening here, and under which launch's
@@ -359,7 +365,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _dispatch_post(self) -> None:
         parsed = urlsplit(self.path)
-        if parsed.path not in ("/api/shutdown", "/api/matrix", "/api/export/pdf"):
+        if parsed.path not in (
+            "/api/shutdown",
+            "/api/matrix",
+            "/api/export/pdf",
+            "/api/examples/load",
+        ):
             self._reject(HTTPStatus.NOT_FOUND, "Not found.")
             return
         # Every POST route is state-changing (or at least does real work), so
@@ -373,6 +384,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/export/pdf":
             self._serve_export_pdf()
+            return
+        if parsed.path == "/api/examples/load":
+            self._serve_example_load(parse_qs(parsed.query))
             return
 
         header = self.headers.get("Content-Length")
@@ -413,7 +427,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     pass
             self._reject(HTTPStatus.BAD_REQUEST, str(exc))
             return
-        self.server.set_dashboard_matrix(matrix, tmp_path)
+        self._respond_with_loaded_matrix(matrix, tmp_path)
+
+    def _respond_with_loaded_matrix(self, matrix, tempfile_path: str | None) -> None:
+        self.server.set_dashboard_matrix(matrix, tempfile_path)
         self._write_json(
             HTTPStatus.OK,
             {
@@ -423,6 +440,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "warnings": list(matrix.warnings),
             },
         )
+
+    def _serve_example_load(self, query: dict) -> None:
+        name = query.get("name", [None])[0]
+        if not name:
+            self._reject(
+                HTTPStatus.BAD_REQUEST, "The 'name' query parameter is required."
+            )
+            return
+        path = examples.example_path(name)
+        if path is None:
+            self._reject(
+                HTTPStatus.NOT_FOUND,
+                "Unknown example, or it is not bundled in this install.",
+            )
+            return
+        try:
+            # Read straight from the package's own bundled file -- no
+            # temp-file copy needed, since load_matrix already reads lazily
+            # from whatever path it's given (see matrix.py). Pass None as
+            # the owned tempfile_path below: this path belongs to the
+            # package, not to us, so it must never be unlinked the way an
+            # upload's temp file is when replaced or on shutdown.
+            matrix = load_matrix(path)
+        except MatrixError as exc:
+            self._reject(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        self._respond_with_loaded_matrix(matrix, None)
 
     def _serve_shutdown(self) -> None:
         # Defense-in-depth alongside the Origin check in _dispatch_post: the

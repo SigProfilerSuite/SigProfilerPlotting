@@ -13,12 +13,12 @@
 <div class="app" id="app">
 
   <header class="topbar">
-    <div class="brand">
+    <button class="brand" id="homeButton" type="button" title="Back to the home screen">
       <span class="mark" aria-hidden="true">SP</span>
       <div class="titles">
         <h1>SigProfilerPlotting Workbench</h1>
       </div>
-    </div>
+    </button>
     <div class="spacer"></div>
     <div class="pick">
       <select id="themeSel" title="Theme" aria-label="Theme">
@@ -120,12 +120,69 @@
 
       <section>
         <div id="emptyState" class="empty-card">
-          <div class="bd">
-            <h2>Load a matrix to begin</h2>
-            <p>Choose a SigProfiler matrix file. Its mutation context is detected from the
-               rows, and each sample or signature you select is drawn as an interactive
-               plot: hover for values, drag to zoom, double-click to reset, and use the
-               toolbar above each plot to pan or download it.</p>
+          <div class="bd" id="homeIntro">
+            <h2>Explore mutational signatures and patterns</h2>
+            <p>Choose a SigProfiler matrix file to begin. Its mutation context is detected
+               from the rows, and each sample or signature you select is drawn as an
+               interactive plot: hover for values, drag to zoom, double-click to reset, and
+               use the toolbar above each plot to pan or export it as an SVG or PDF.</p>
+            <div class="context-grid" id="contextGrid" aria-label="Supported mutation contexts">
+              <div class="context-card" data-examples="sbs96,sbs288">
+                <div class="context-icon">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 16V10M8 16V6M13 16V11M17 16V4"/></svg>
+                </div>
+                <div class="context-card-body">
+                  <h3>Single-base substitutions</h3>
+                  <p>SBS96, SBS288, SBS1536, SBS4608 -- with COSMIC signature comparison.</p>
+                  <div class="context-examples"></div>
+                </div>
+              </div>
+              <div class="context-card" data-examples="dbs78">
+                <div class="context-icon">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="10" r="4"/><circle cx="13" cy="10" r="4"/></svg>
+                </div>
+                <div class="context-card-body">
+                  <h3>Doublet substitutions</h3>
+                  <p>DBS78 and its wider reference-context variants.</p>
+                  <div class="context-examples"></div>
+                </div>
+              </div>
+              <div class="context-card" data-examples="id83">
+                <div class="context-icon">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M5 5h4M7 3v4"/><path d="M11 14h4"/></svg>
+                </div>
+                <div class="context-card-body">
+                  <h3>Small insertions and deletions</h3>
+                  <p>ID83, plus the Koh et al. ID89 and ID476 classification schemes.</p>
+                  <div class="context-examples"></div>
+                </div>
+              </div>
+              <div class="context-card" data-examples="cnv48">
+                <div class="context-icon">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="6" height="3" rx="1"/><rect x="11" y="4" width="6" height="3" rx="1"/><rect x="3" y="9" width="10" height="3" rx="1"/><rect x="3" y="14" width="14" height="3" rx="1"/></svg>
+                </div>
+                <div class="context-card-body">
+                  <h3>Copy-number alterations</h3>
+                  <p>CNV48 segment-size and zygosity classifications.</p>
+                  <div class="context-examples"></div>
+                </div>
+              </div>
+              <div class="context-card" data-examples="sv32">
+                <div class="context-icon">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h6l3 8h5"/><path d="M14 11l3 3-3 3"/></svg>
+                </div>
+                <div class="context-card-body">
+                  <h3>Structural variants</h3>
+                  <p>SV32 rearrangement-size classifications.</p>
+                  <div class="context-examples"></div>
+                </div>
+              </div>
+            </div>
+            <p class="hint" style="margin-top:12px">Any other recognized context renders with a generic grouped view.</p>
+          </div>
+          <div class="bd hidden" id="noSelectionNotice">
+            <h2>Nothing selected</h2>
+            <p>Select samples or signatures in the list to draw them.</p>
           </div>
         </div>
         <div id="plots" class="plots"></div>

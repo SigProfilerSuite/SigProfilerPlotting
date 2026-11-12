@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 - A "Save plot as PDF" button in each plot's toolbar, next to the existing SVG export, via a new `/api/export/pdf` endpoint that wraps a browser-rasterized PNG in a one-page PDF (no Kaleido/Chrome needed, unlike the static SBS4608 PDF export).
+- A redesigned dashboard home screen: an illustrated card per mutation class (substitutions, doublets, indels, copy-number, structural variants), each with a "Try `<context>`" button that loads a real bundled example matrix with a single click, via a new `/api/examples` and `/api/examples/load` endpoint pair. The bundled example matrices are now included in the package itself (`setup.py`/`MANIFEST.in`), so this also works from a plain `pip install`.
+- A bundled `dbs78_example.all` example matrix, giving the home screen's "Doublet substitutions" card a working "Try DBS78" button.
+- Made the logo/title in the dashboard's top bar a working "Home" button that clears the loaded matrix and returns to the home screen.
 
 ### Fixed
 - Reject incomplete, duplicated, negative, or non-finite user-supplied COSMIC catalogues and ambiguous catalogue versions.
@@ -22,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fixed a dead dashboard CSS rule that could never hide the sidebar at narrow widths (a same-specificity override declared before, instead of after, the base rule it was meant to win against); replaced it with a rule that keeps the sidebar's matrix/sample controls reachable by stacking it above the plots instead of hiding it, since nothing in the main content duplicates them.
 - Fixed DBS1248's dashboard renderer grouping bars by flank prefix instead of by reference dinucleotide, and DBS78's renderer reusing colors across different reference dinucleotides.
 - Fixed the dashboard's "Compare with COSMIC signatures" checkbox staying stuck disabled, with a stale hint, if a matrix was uploaded and narrowed to one sample before the one-time COSMIC catalogue scan at page load had finished.
+- Removed a stray trailing tab from every line of the bundled `breast_cancer_samples_example.SBS96.all`, `.DBS78.all`, and `.SBS192.all` example matrices, which made the dashboard's strict parser reject them with "every column needs a non-empty name".
+- Fixed the dashboard launcher's Windows process-liveness check calling `os.kill(pid, 0)`, which on Windows sends Ctrl+C to every process on the console (the caller included) instead of probing the pid, since signal 0 is `CTRL_C_EVENT` there; it could raise `KeyboardInterrupt` out of `--stop` whenever it found the startup lock still held by the server it had just stopped.
 
 ### Changed
 - Updated repository, maintainer, and contact metadata.

@@ -163,6 +163,74 @@ async function upload(file) {
   loadMatrix(body);
 }
 
+// Populates the home screen's "Try an example" row from whatever bundled
+// examples this install actually has (see sigProfilerPlotting/web/
+// examples.py) -- a pip install predating that bundling, or one missing a
+// file for any other reason, just shows no buttons rather than dead ones.
+async function loadExamplesMenu() {
+  let list;
+  try {
+    const response = await fetch('/api/examples');
+    const body = await readJson(response);
+    list = (response.ok && Array.isArray(body.examples)) ? body.examples : [];
+  } catch (e) {
+    list = [];
+  }
+  if (!list.length) return;
+  const byName = new Map(list.map((entry) => [entry.name, entry]));
+  // Each home-screen context card names, in its own data-examples attribute,
+  // which bundled example(s) demonstrate it -- a card whose example is
+  // missing from this install (or that has none, like DBS78 today) simply
+  // shows no button, rather than a flat list disconnected from what each
+  // example actually contains.
+  for (const card of document.querySelectorAll('#contextGrid .context-card')) {
+    const names = (card.dataset.examples || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const container = card.querySelector('.context-examples');
+    const frag = document.createDocumentFragment();
+    for (const name of names) {
+      const entry = byName.get(name);
+      if (!entry) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn sm';
+      button.textContent = `Try ${entry.context}`;
+      button.title = `Load the bundled ${entry.label.toLowerCase()} example`;
+      button.addEventListener('click', () => loadExample(entry.name, button));
+      frag.append(button);
+    }
+    if (frag.childNodes.length) container.append(frag);
+  }
+}
+
+async function loadExample(name, button) {
+  clearError();
+  showWarnings([]);
+  const before = $('matrixSummary').textContent;
+  $('matrixSummary').textContent = 'Loading the example';
+  if (button) button.disabled = true;
+  let response;
+  let body;
+  try {
+    response = await fetch(`/api/examples/load?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+    });
+    body = await readJson(response);
+  } catch (e) {
+    $('matrixSummary').textContent = before;
+    showError(`The dashboard server could not be reached (${e.message}). Check that it is still running.`);
+    if (button) button.disabled = false;
+    return;
+  }
+  if (!response.ok || !Array.isArray(body.samples)) {
+    $('matrixSummary').textContent = before;
+    showError(body.error || `Could not load the example: the server answered ${response.status}.`);
+    if (button) button.disabled = false;
+    return;
+  }
+  $('fileName').textContent = `Example: ${body.context}`;
+  loadMatrix(body);
+}
+
 function loadMatrix(info) {
   state.generation++;
   for (const name of [...state.cards.keys()]) dropCard(name);
@@ -214,6 +282,34 @@ function loadMatrix(info) {
   $('cosmicPanel').classList.toggle('hidden', !COSMIC_COMPATIBLE_CONTEXTS.has(state.context));
   $('sampleSearch').value = '';
   for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = false;
+  renderList();
+  syncCosmicControls();
+  sync();
+}
+
+// The reverse of loadMatrix() -- unloads whatever is loaded and brings back
+// the home screen, as if the page had just been opened. Nothing here is
+// persisted anywhere (no run, no server-side state beyond the matrix
+// itself), so there is nothing to confirm first, unlike quit().
+function goHome() {
+  state.generation++;
+  for (const name of [...state.cards.keys()]) dropCard(name);
+  state.context = null;
+  state.samples = [];
+  state.selected = new Set();
+  state.limit = pageSize();
+  state.variant = 'default';
+  state.toggles = { transcription_bias: true, total_heatmap: true, detailed_heatmaps: true };
+  clearError();
+  showWarnings([]);
+  $('matrixSummary').textContent = 'No matrix loaded';
+  $('fileName').textContent = '';
+  $('variantPanel').classList.add('hidden');
+  state.cosmic.enabled = false;
+  $('cosmicEnabled').checked = false;
+  $('cosmicPanel').classList.add('hidden');
+  $('sampleSearch').value = '';
+  for (const id of ['sampleSearch', 'selectAll', 'clearAll']) $(id).disabled = true;
   renderList();
   syncCosmicControls();
   sync();
@@ -685,11 +781,10 @@ function sync() {
     $('loadMore').textContent = `Load ${Math.min(rest, pageSize())} more`;
   }
   const empty = $('emptyState');
+  const noMatrixYet = state.samples.length === 0;
   empty.classList.toggle('hidden', target.length > 0);
-  if (state.samples.length && !target.length) {
-    empty.querySelector('h2').textContent = 'Nothing selected';
-    empty.querySelector('p').textContent = 'Select samples or signatures in the list to draw them.';
-  }
+  $('homeIntro').classList.toggle('hidden', !noMatrixYet);
+  $('noSelectionNotice').classList.toggle('hidden', noMatrixYet);
 }
 
 let loadMoreCooldownUntil = 0;
@@ -799,12 +894,14 @@ function init() {
     c.addEventListener('change', () => onToggle(c.value, c.checked)));
   $('cosmicEnabled').addEventListener('change', onCosmicChange);
   $('cosmicBuild').addEventListener('change', onCosmicChange);
+  $('homeButton').addEventListener('click', goHome);
   $('quitButton').addEventListener('click', () => $('quitDialog').showModal());
   $('quitCancel').addEventListener('click', () => $('quitDialog').close());
   $('quitGo').addEventListener('click', quit);
   document.querySelectorAll('.about-btn[aria-controls]').forEach(wireAbout);
 
   loadCosmicBuilds();
+  loadExamplesMenu();
 
   new IntersectionObserver((entries) => {
     state.sentinelVisible = entries.some((e) => e.isIntersecting);

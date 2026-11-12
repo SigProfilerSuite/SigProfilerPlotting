@@ -186,6 +186,47 @@ def _render_requests(page):
 
 # ------------------------------------------------------------------ loading
 
+def test_the_home_screen_offers_working_example_buttons():
+    with _dashboard() as page:
+        assert page.is_visible("#homeIntro")
+        assert page.is_hidden("#noSelectionNotice")
+        buttons = page.locator("#contextGrid .context-examples button")
+        page.wait_for_function(
+            "n => document.querySelectorAll('#contextGrid .context-examples button').length >= n",
+            arg=6,
+        )
+        labels = buttons.all_text_contents()
+        assert "Try SBS96" in labels
+        assert "Try DBS78" in labels
+
+        buttons.filter(has_text="Try SBS96").first.click()
+        page.wait_for_function(
+            "c => document.getElementById('matrixSummary').textContent.startsWith(c)",
+            arg="SBS96",
+        )
+        _wait_ready(page, 1)
+        # Loading an example hides the whole home screen, same as an upload.
+        assert page.is_hidden("#homeIntro")
+        assert page.locator(".card").count() > 0
+
+
+def test_the_brand_button_returns_to_the_home_screen(tmp_path):
+    path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1"])
+    with _dashboard() as page:
+        _upload(page, path, "SBS96", 1)
+        assert page.is_hidden("#homeIntro")
+        assert page.locator(".card").count() == 1
+
+        page.click("#homeButton")
+        page.wait_for_function(
+            "() => document.getElementById('matrixSummary').textContent === 'No matrix loaded'"
+        )
+        assert page.is_visible("#homeIntro")
+        assert page.locator(".card").count() == 0
+        assert page.locator("#sampleList li").count() == 0
+        assert page.is_disabled("#selectAll")
+
+
 def test_only_the_first_page_of_plots_is_fetched(tmp_path):
     names = [f"PD{i:04d}a" for i in range(40)]
     path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", names)
