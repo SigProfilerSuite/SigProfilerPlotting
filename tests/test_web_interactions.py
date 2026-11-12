@@ -15,6 +15,7 @@ instead; with neither, these tests are skipped.
 
 import random
 import threading
+import time
 from contextlib import contextmanager
 
 import pytest
@@ -607,6 +608,57 @@ def test_cosmic_comparison_stays_disabled_without_a_configured_catalogue(tmp_pat
         assert page.is_visible("#cosmicPanel")
         assert page.is_disabled("#cosmicEnabled")
         assert "does not bundle" in page.text_content("#cosmicHint")
+
+
+def test_cosmic_controls_update_once_a_slow_builds_fetch_resolves(tmp_path, _cosmic_catalogue):
+    # The catalogue scan behind /api/cosmic/builds runs once, at page load,
+    # concurrently with whatever the reader does next. If it is still in
+    # flight when they upload a matrix and narrow to one sample, the
+    # checkbox must still end up enabled once it resolves -- not stuck
+    # disabled until some unrelated later action happens to re-sync it.
+    from sigProfilerPlotting.web.server import make_server
+
+    sbs96_path = _write_matrix(tmp_path / "sbs96.txt", "SBS96", ["Sample1"])
+    server = make_server("127.0.0.1", 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with sync_api.sync_playwright() as playwright:
+            browser = _launch(playwright)
+            try:
+                page = browser.new_page(viewport={"width": 1400, "height": 900})
+                errors = []
+                page.on("pageerror", lambda exc: errors.append(str(exc)))
+                # The handler must not block: Playwright's sync API routes
+                # calls through a single dispatcher, so a handler that
+                # sleeps or waits on another thread stalls every other
+                # call this test makes, serializing away the very race it
+                # needs to create. Instead, just park the route and let the
+                # main thread release it later, whenever it chooses.
+                held = {}
+                page.route("**/api/cosmic/builds", lambda route: held.setdefault("route", route))
+                page.goto(f"http://127.0.0.1:{server.server_address[1]}/")
+                _upload(page, sbs96_path, "SBS96", 1)
+
+                deadline = time.monotonic() + 5
+                while "route" not in held and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert "route" in held, "the /api/cosmic/builds request was never intercepted"
+
+                # The builds fetch is still held back: the checkbox is
+                # correctly disabled, since no catalogue is known yet.
+                assert page.is_disabled("#cosmicEnabled")
+
+                held["route"].continue_()
+                page.wait_for_function(
+                    "() => !document.getElementById('cosmicEnabled').disabled"
+                )
+                assert "Select exactly one" in page.text_content("#cosmicHint")
+                assert not errors, errors
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_sbs4608_switches_the_whole_figure(tmp_path):
