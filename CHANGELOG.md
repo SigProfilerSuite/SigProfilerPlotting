@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A redesigned dashboard home screen: an illustrated card per mutation class (substitutions, doublets, indels, copy-number, structural variants), each with a "Try `<context>`" button that loads a real bundled example matrix with a single click, via a new `/api/examples` and `/api/examples/load` endpoint pair. The bundled example matrices are now included in the package itself (`setup.py`/`MANIFEST.in`), so this also works from a plain `pip install`.
 - A bundled `dbs78_example.all` example matrix, giving the home screen's "Doublet substitutions" card a working "Try DBS78" button.
 - Made the logo/title in the dashboard's top bar a working "Home" button that clears the loaded matrix and returns to the home screen.
+- The launcher scripts now install the dashboard's dependencies with [uv](https://docs.astral.sh/uv/) when possible (adding it to the dashboard's own environment first if it isn't already on `PATH`), falling back to pip if uv can't be added or can't install; set `SIGPROFILERPLOTTING_WEB_INSTALLER=pip` to always use pip.
 
 ### Fixed
 - Reject incomplete, duplicated, negative, or non-finite user-supplied COSMIC catalogues and ambiguous catalogue versions.

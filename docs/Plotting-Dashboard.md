@@ -59,6 +59,14 @@ or two. Every later launch reuses that environment and starts in a couple of sec
 you'll see `Dependencies already installed; skipping install.` printed instead of an
 install running.
 
+The launcher installs with [uv](https://docs.astral.sh/uv/), which downloads and
+installs packages in parallel and is much quicker than pip. It uses the `uv` already on
+your PATH if there is one; otherwise it first adds uv to the dashboard's own
+environment. If uv cannot be added or cannot install, the launcher says so and uses pip
+instead. To always use pip, for example behind a network that only allows pip's
+configured package mirror, set the environment variable
+`SIGPROFILERPLOTTING_WEB_INSTALLER=pip`.
+
 Either way, once the server is ready your default browser opens automatically to the
 dashboard, and the terminal prints the URL it's running at (`http://127.0.0.1:<port>/`)
 along with a reminder of how to stop it. If a dashboard is already running, launching
